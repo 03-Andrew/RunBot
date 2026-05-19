@@ -17,6 +17,7 @@ Use `.env.example` as the placeholder reference:
 AWS_ACCESS_KEY=YOUR_KEY
 AWS_SECRET_KEY=YOUR_SECRET
 AWS_REGION=ap-southeast-1
+TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
 ```
 
 Terraform uses the standard AWS provider credential chain. Export credentials before applying:
@@ -25,6 +26,7 @@ Terraform uses the standard AWS provider credential chain. Export credentials be
 export AWS_ACCESS_KEY_ID=YOUR_KEY
 export AWS_SECRET_ACCESS_KEY=YOUR_SECRET
 export AWS_REGION=ap-southeast-1
+export TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
 ```
 
 ## Deploy
@@ -53,3 +55,14 @@ Expected response:
 ```json
 {"status":"ok"}
 ```
+
+## Discord Interactions
+
+Set the Discord Developer Portal Interactions Endpoint URL to:
+
+```text
+API_URL/discord-interactions
+```
+
+The Lambda verifies `X-Signature-Ed25519` and `X-Signature-Timestamp` using
+the Discord application public key before responding to Discord's PING request.

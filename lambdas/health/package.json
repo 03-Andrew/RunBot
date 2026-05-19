@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && mkdir -p dist/node_modules && cp -R node_modules/tweetnacl dist/node_modules/tweetnacl"
   },
   "devDependencies": {
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
   }
 }

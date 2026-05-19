@@ -1,0 +1,10 @@
+{
+  "name": "runbot",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix lambdas/health run build",
+    "terraform:init": "terraform -chdir=infrastructure init",
+    "terraform:apply": "terraform -chdir=infrastructure apply"
+  }
+}

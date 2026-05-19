@@ -85,10 +85,10 @@ resource "aws_apigatewayv2_route" "health" {
   target = "integrations/${aws_apigatewayv2_integration.health.id}"
 }
 
-resource "aws_apigatewayv2_route" "health" {
+resource "aws_apigatewayv2_route" "discord" {
   api_id = aws_apigatewayv2_api.api.id
-  route_key = "GET /health"
-  target = "integrations/${aws_apigatewayv2_integration.health.id}"
+  route_key = "POST /discord-interactions"
+  target ="integrations/${aws_apigatewayv2_integration.health.id}"
 }
 
 ################################

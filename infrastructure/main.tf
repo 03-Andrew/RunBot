@@ -5,7 +5,7 @@
 data "archive_file" "health_zip" {
   type        = "zip"
   source_dir  = "../lambdas/health/dist"
-  output_path = "../lambdas/health/dist/function.zip"
+  output_path = "../lambdas/health/function.zip"
 }
 
 
@@ -53,6 +53,8 @@ resource "aws_lambda_function" "health" {
       STRAVA_CLIENT_ID     = var.strava_client_id
       STRAVA_CLIENT_SECRET = var.strava_client_secret
       VERIFY_TOKEN         = var.verify_token
+      DISCORD_BOT_TOKEN    = var.discord_bot_token
+      DISCORD_CHANNEL_ID   = var.discord_channel_id
     }
   }
   depends_on = [
@@ -218,4 +220,3 @@ resource "aws_dynamodb_table" "activitybot" {
     projection_type = "ALL"
   }
 }
-

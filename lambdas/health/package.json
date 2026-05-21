@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "tsc && mkdir -p dist/node_modules && cp -R node_modules/tweetnacl dist/node_modules/tweetnacl"
+    "build": "tsc && node scripts/copy-prod-deps.js"
   },
   "devDependencies": {
     "typescript": "^5.4.5"

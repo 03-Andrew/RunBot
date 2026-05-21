@@ -40,6 +40,10 @@ async function register(){
    {
      name:"strava",
      description:"Connect Strava account"
+   },
+   {
+     name:"get-latest",
+     description:"Show your latest Strava activity"
    }
  ];
 

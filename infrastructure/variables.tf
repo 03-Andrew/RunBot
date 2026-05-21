@@ -17,3 +17,11 @@ variable "verify_token" {
   sensitive = true
 }
 
+variable "discord_bot_token" {
+  type      = string
+  sensitive = true
+}
+
+variable "discord_channel_id" {
+  type = string
+}

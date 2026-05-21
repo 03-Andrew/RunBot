@@ -3,3 +3,17 @@ variable "discord_public_key" {
   type        = string
   sensitive   = true
 }
+
+variable "strava_client_id" {
+  type = string
+}
+
+variable "strava_client_secret" {
+  type = string
+}
+
+variable "verify_token" {
+  type      = string
+  sensitive = true
+}
+

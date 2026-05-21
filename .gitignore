@@ -6,3 +6,5 @@ terraform.tfstate.backup
 *.tfvars
 *.zip
 .env
+steps.txt
+.codexignore

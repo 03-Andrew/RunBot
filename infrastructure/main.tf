@@ -49,13 +49,18 @@ resource "aws_lambda_function" "health" {
   source_code_hash = data.archive_file.health_zip.output_base64sha256
   environment {
     variables = {
-      DISCORD_PUBLIC_KEY = var.discord_public_key
+      DISCORD_PUBLIC_KEY   = var.discord_public_key
+      STRAVA_CLIENT_ID     = var.strava_client_id
+      STRAVA_CLIENT_SECRET = var.strava_client_secret
+      VERIFY_TOKEN         = var.verify_token
     }
   }
   depends_on = [
     aws_iam_role_policy_attachment.basic
   ]
 }
+
+
 
 
 ################################
@@ -97,6 +102,31 @@ resource "aws_apigatewayv2_route" "discord" {
 }
 
 ################################
+# Strava OAuth Callback
+################################
+
+resource "aws_apigatewayv2_route" "strava_callback" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /strava/callback"
+  target    = "integrations/${aws_apigatewayv2_integration.health.id}"
+}
+resource "aws_apigatewayv2_route" "strava_verify" {
+
+  route_key = "GET /strava/webhook"
+
+  api_id = aws_apigatewayv2_api.api.id
+
+  target = "integrations/${aws_apigatewayv2_integration.health.id}"
+}
+
+
+resource "aws_apigatewayv2_route" "strava_event" {
+  route_key = "POST /strava/webhook"
+  api_id    = aws_apigatewayv2_api.api.id
+  target    = "integrations/${aws_apigatewayv2_integration.health.id}"
+}
+
+################################
 # Default Stage
 ################################
 
@@ -118,3 +148,74 @@ resource "aws_lambda_permission" "api" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }
+
+resource "aws_iam_role_policy" "dynamo" {
+
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+
+    Version = "2012-10-17"
+
+    Statement = [{
+
+      Effect = "Allow"
+
+      Action = [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:Query"
+      ]
+
+      Resource = [
+        aws_dynamodb_table.activitybot.arn,
+        "${aws_dynamodb_table.activitybot.arn}/index/*"
+      ]
+    }]
+  })
+}
+
+################################
+# Dynamo DB
+################################
+
+resource "aws_dynamodb_table" "activitybot" {
+
+  name = "ActivityBot"
+
+  billing_mode = "PAY_PER_REQUEST"
+
+  hash_key  = "PK"
+  range_key = "SK"
+
+  attribute {
+    name = "PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "SK"
+    type = "S"
+  }
+
+  attribute {
+    name = "GSI1PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "GSI1SK"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name = "GSI1"
+
+    hash_key = "GSI1PK"
+
+    range_key = "GSI1SK"
+
+    projection_type = "ALL"
+  }
+}
+

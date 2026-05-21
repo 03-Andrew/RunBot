@@ -5,8 +5,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
 const tweetnacl_1 = __importDefault(require("tweetnacl"));
+const stravaConnectedPage_1 = require("./stravaConnectedPage");
+const client_dynamodb_1 = require("@aws-sdk/client-dynamodb");
+const lib_dynamodb_1 = require("@aws-sdk/lib-dynamodb");
+const client = new client_dynamodb_1.DynamoDBClient({});
+const db = lib_dynamodb_1.DynamoDBDocumentClient.from(client);
 const jsonHeaders = {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
 };
 const hexToUint8Array = (hex) => {
     if (hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) {
@@ -22,7 +27,7 @@ const getHeader = (headers, name) => {
     if (!headers) {
         return undefined;
     }
-    return headers[name] ?? headers[name.toLowerCase()] ?? headers[name.toUpperCase()];
+    return (headers[name] ?? headers[name.toLowerCase()] ?? headers[name.toUpperCase()]);
 };
 const getRawBody = (event) => {
     const body = event.body ?? "";
@@ -54,9 +59,87 @@ const handler = async (event) => {
         return {
             statusCode: 200,
             body: JSON.stringify({
-                status: "ok"
-            })
+                status: "ok",
+            }),
         };
+    }
+    // Strava OAuth callback
+    if (path === "/strava/callback" && method === "GET") {
+        const code = event.queryStringParameters?.code;
+        const discordId = event.queryStringParameters?.state;
+        const response = await fetch("https://www.strava.com/oauth/token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                client_id: process.env.STRAVA_CLIENT_ID,
+                client_secret: process.env.STRAVA_CLIENT_SECRET,
+                code,
+                grant_type: "authorization_code",
+            }),
+        });
+        if (!code || !discordId) {
+            return {
+                statusCode: 400,
+                body: "Missing Strava authorization code or state.",
+            };
+        }
+        const data = await response.json();
+        const athleteId = data.athlete.id;
+        await db.send(new lib_dynamodb_1.PutCommand({
+            TableName: "ActivityBot",
+            Item: {
+                PK: `USER#${discordId}`,
+                SK: "PROFILE",
+                DiscordID: discordId,
+                StravaID: athleteId,
+                AccessToken: data.access_token,
+                RefreshToken: data.refresh_token,
+                ExpiresAt: data.expires_at,
+                GSI1PK: `STRAVA#${athleteId}`,
+                GSI1SK: "PROFILE",
+            },
+        }));
+        return {
+            statusCode: 200,
+            headers: {
+                "Content-Type": "text/html",
+            },
+            body: stravaConnectedPage_1.stravaConnectedPage,
+        };
+    }
+    if (path === "/strava/webhook") {
+        if (method === "GET") {
+            const challenge = event.queryStringParameters?.["hub.challenge"];
+            const verifyToken = event.queryStringParameters?.["hub.verify_token"];
+            if (verifyToken !== process.env.VERIFY_TOKEN) {
+                return {
+                    statusCode: 403,
+                    body: "Invalid token",
+                };
+            }
+            return {
+                statusCode: 200,
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    "hub.challenge": challenge,
+                }),
+            };
+        }
+        if (method === "POST") {
+            const body = JSON.parse(event.body);
+            console.log("WEBHOOK EVENT:");
+            console.log(JSON.stringify(body));
+            return {
+                statusCode: 200,
+                body: JSON.stringify({
+                    received: true,
+                }),
+            };
+        }
     }
     // Discord endpoint
     if (path === "/discord-interactions" && method === "POST") {
@@ -64,7 +147,7 @@ const handler = async (event) => {
         if (!isValidDiscordRequest(event, rawBody)) {
             return {
                 statusCode: 401,
-                body: "Invalid request signature"
+                body: "Invalid request signature",
             };
         }
         const body = JSON.parse(rawBody || "{}");
@@ -74,8 +157,42 @@ const handler = async (event) => {
                 statusCode: 200,
                 headers: jsonHeaders,
                 body: JSON.stringify({
-                    type: 1
-                })
+                    type: 1,
+                }),
+            };
+        }
+        if (body.data?.name === "strava") {
+            const discordUserId = body.member.user.id;
+            const clientId = process.env.STRAVA_CLIENT_ID;
+            if (!clientId) {
+                return {
+                    statusCode: 200,
+                    headers: jsonHeaders,
+                    body: JSON.stringify({
+                        type: 4,
+                        data: {
+                            content: "Strava is not configured yet.",
+                        },
+                    }),
+                };
+            }
+            const redirect = "https://2i877vt1l9.execute-api.ap-southeast-1.amazonaws.com/strava/callback";
+            const url = new URL("https://www.strava.com/oauth/authorize");
+            url.searchParams.set("client_id", clientId);
+            url.searchParams.set("response_type", "code");
+            url.searchParams.set("redirect_uri", redirect);
+            url.searchParams.set("approval_prompt", "force");
+            url.searchParams.set("scope", "activity:read_all");
+            url.searchParams.set("state", discordUserId);
+            return {
+                statusCode: 200,
+                headers: jsonHeaders,
+                body: JSON.stringify({
+                    type: 4,
+                    data: {
+                        content: `Connect Strava:\n${url.toString()}`,
+                    },
+                }),
             };
         }
         return {
@@ -84,14 +201,14 @@ const handler = async (event) => {
             body: JSON.stringify({
                 type: 4,
                 data: {
-                    content: "✅ System online"
-                }
-            })
+                    content: "✅ System online",
+                },
+            }),
         };
     }
     return {
         statusCode: 404,
-        body: "Not Found"
+        body: "Not Found",
     };
 };
 exports.handler = handler;

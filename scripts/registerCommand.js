@@ -32,20 +32,28 @@ if (!APP_ID || !BOT_TOKEN) {
 
 async function register(){
 
+ const commands=[
+   {
+     name:"health",
+     description:"Check bot health"
+   },
+   {
+     name:"strava",
+     description:"Connect Strava account"
+   }
+ ];
+
  await fetch(
    `https://discord.com/api/v10/applications/${APP_ID}/commands`,
    {
-      method:"POST",
+      method:"PUT",
 
       headers:{
         "Authorization":`Bot ${BOT_TOKEN}`,
         "Content-Type":"application/json"
       },
 
-      body:JSON.stringify({
-          name:"health",
-          description:"Check bot health"
-      })
+      body:JSON.stringify(commands)
    }
  )
 

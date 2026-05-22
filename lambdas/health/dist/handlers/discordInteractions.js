@@ -2,10 +2,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleDiscordInteractions = void 0;
 const discord_1 = require("../discord");
-const stravaApi_1 = require("../stravaApi");
-const stravaActivityMessage_1 = require("../stravaActivityMessage");
+const stravaStats_1 = require("../stravaStats");
 const requestUtils_1 = require("../requestUtils");
 const http_1 = require("../http");
+const stravaApi_1 = require("../stravaApi");
 const handleDiscordInteractions = async (event) => {
     const rawBody = (0, requestUtils_1.getRawBody)(event);
     if (!(0, discord_1.isValidDiscordRequest)(event, rawBody)) {
@@ -44,7 +44,7 @@ const handleDiscordInteractions = async (event) => {
             },
         });
     }
-    if (body.data?.name === "get-latest") {
+    if (body.data?.name === "stats") {
         const discordUserId = body.member?.user?.id ?? body.user?.id;
         if (!discordUserId) {
             return (0, http_1.jsonResponse)(200, {
@@ -55,7 +55,7 @@ const handleDiscordInteractions = async (event) => {
                 },
             });
         }
-        const user = (await (0, stravaApi_1.getLinkedStravaUserByDiscordId)(discordUserId));
+        const user = await (0, stravaApi_1.getLinkedStravaUserByDiscordId)(discordUserId);
         if (!user) {
             return (0, http_1.jsonResponse)(200, {
                 type: 4,
@@ -66,33 +66,25 @@ const handleDiscordInteractions = async (event) => {
             });
         }
         try {
-            const activity = await (0, stravaApi_1.fetchLatestStravaActivity)(user);
-            if (!activity) {
-                return (0, http_1.jsonResponse)(200, {
-                    type: 4,
-                    data: {
-                        content: "No recent Strava activity found.",
-                        flags: 64,
-                    },
-                });
-            }
+            const afterUnixSeconds = (0, stravaStats_1.getCurrentWeekStartUnixSeconds)();
+            const activities = await (0, stravaApi_1.fetchStravaActivitiesSince)(user, afterUnixSeconds);
             return (0, http_1.jsonResponse)(200, {
                 type: 4,
                 data: {
-                    content: (0, stravaActivityMessage_1.buildStravaActivityMessage)(activity, discordUserId),
+                    content: (0, stravaStats_1.buildWeeklyStatsMessage)(activities),
                     flags: 64,
                 },
             });
         }
         catch (error) {
-            console.error("Failed to fetch latest Strava activity", {
+            console.error("Failed to fetch weekly Strava stats", {
                 discordUserId,
                 error,
             });
             return (0, http_1.jsonResponse)(200, {
                 type: 4,
                 data: {
-                    content: "Could not load your latest Strava activity right now.",
+                    content: "Could not load your weekly Strava stats right now.",
                     flags: 64,
                 },
             });

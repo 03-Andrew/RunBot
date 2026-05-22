@@ -1,4 +1,4 @@
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { db } from "../storage";
 import { jsonResponse, textResponse } from "../http";
 import { getRawBody } from "../requestUtils";
@@ -133,6 +133,19 @@ export const handleStravaWebhook = async (event: {
       reason: "activity_fetch_failed",
     });
   }
+
+  await db.send(
+    new PutCommand({
+      TableName: "ActivityBot",
+      Item: {
+        PK: `USER#${user.DiscordID}`,
+        SK: `ACTIVITY#${activity.id}`,
+        DiscordID: user.DiscordID,
+        UpdatedAt: new Date().toISOString(),
+        ...activity,
+      },
+    })
+  );
 
   const discordResponse = await fetch(
     `https://discord.com/api/v10/channels/${process.env.DISCORD_CHANNEL_ID}/messages`,

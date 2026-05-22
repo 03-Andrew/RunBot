@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.fetchLatestStravaActivity = exports.fetchStravaActivity = exports.getLinkedStravaUserByDiscordId = exports.getStravaAccessToken = void 0;
+exports.fetchStravaActivitiesSince = exports.fetchStravaActivity = exports.getStoredStravaActivitiesByDiscordId = exports.getLinkedStravaUserByDiscordId = exports.getStravaAccessToken = void 0;
 const lib_dynamodb_1 = require("@aws-sdk/lib-dynamodb");
 const storage_1 = require("./storage");
 const STRAVA_API_BASE = "https://www.strava.com/api/v3";
@@ -75,6 +75,25 @@ const getLinkedStravaUserByDiscordId = async (discordUserId) => {
     return result.Item;
 };
 exports.getLinkedStravaUserByDiscordId = getLinkedStravaUserByDiscordId;
+const getStoredStravaActivitiesByDiscordId = async (discordUserId) => {
+    const items = [];
+    let lastEvaluatedKey;
+    do {
+        const result = await storage_1.db.send(new lib_dynamodb_1.QueryCommand({
+            TableName: "ActivityBot",
+            KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+            ExpressionAttributeValues: {
+                ":pk": `USER#${discordUserId}`,
+                ":sk": "ACTIVITY#",
+            },
+            ExclusiveStartKey: lastEvaluatedKey,
+        }));
+        items.push(...(result.Items ?? []));
+        lastEvaluatedKey = result.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+    return items;
+};
+exports.getStoredStravaActivitiesByDiscordId = getStoredStravaActivitiesByDiscordId;
 const fetchStravaActivity = async (user, activityId) => {
     const accessToken = await (0, exports.getStravaAccessToken)(user);
     const fetchActivity = async (token) => {
@@ -97,26 +116,35 @@ const fetchStravaActivity = async (user, activityId) => {
     return (await response.json());
 };
 exports.fetchStravaActivity = fetchStravaActivity;
-const fetchLatestStravaActivity = async (user) => {
+const fetchStravaActivitiesSince = async (user, afterUnixSeconds) => {
     const accessToken = await (0, exports.getStravaAccessToken)(user);
-    const fetchActivities = async (token) => {
-        const response = await fetch(`${STRAVA_API_BASE}/athlete/activities?per_page=1&page=1`, {
+    const allActivities = [];
+    const fetchPage = async (token, page) => {
+        const response = await fetch(`${STRAVA_API_BASE}/athlete/activities?after=${afterUnixSeconds}&per_page=100&page=${page}`, {
             headers: {
                 Authorization: `Bearer ${token}`,
             },
         });
         return response;
     };
-    let response = await fetchActivities(accessToken);
-    if (response.status === 401) {
-        const refreshed = await refreshStravaTokens(user);
-        response = await fetchActivities(refreshed.access_token);
+    let token = accessToken;
+    for (let page = 1; page <= 10; page += 1) {
+        let response = await fetchPage(token, page);
+        if (response.status === 401) {
+            const refreshed = await refreshStravaTokens(user);
+            token = refreshed.access_token;
+            response = await fetchPage(token, page);
+        }
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`Failed to fetch Strava activities: ${response.status} ${errorBody}`);
+        }
+        const activities = (await response.json());
+        allActivities.push(...activities);
+        if (activities.length < 100) {
+            break;
+        }
     }
-    if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(`Failed to fetch latest Strava activity: ${response.status} ${errorBody}`);
-    }
-    const activities = (await response.json());
-    return activities[0];
+    return allActivities;
 };
-exports.fetchLatestStravaActivity = fetchLatestStravaActivity;
+exports.fetchStravaActivitiesSince = fetchStravaActivitiesSince;

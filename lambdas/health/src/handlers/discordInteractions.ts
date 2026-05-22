@@ -1,12 +1,11 @@
 import { buildStravaAuthorizeUrl, isValidDiscordRequest } from "../discord";
-import {
-  fetchLatestStravaActivity,
-  getLinkedStravaUserByDiscordId,
-  type StravaUserRecord,
-} from "../stravaApi";
-import { buildStravaActivityMessage } from "../stravaActivityMessage";
+import { buildWeeklyStatsMessage, getCurrentWeekStartUnixSeconds } from "../stravaStats";
 import { getRawBody } from "../requestUtils";
 import { jsonResponse } from "../http";
+import {
+  getLinkedStravaUserByDiscordId,
+  fetchStravaActivitiesSince,
+} from "../stravaApi";
 
 declare const process: {
   env: {
@@ -67,7 +66,7 @@ export const handleDiscordInteractions = async (event: {
     });
   }
 
-  if (body.data?.name === "get-latest") {
+  if (body.data?.name === "stats") {
     const discordUserId = body.member?.user?.id ?? body.user?.id;
 
     if (!discordUserId) {
@@ -80,9 +79,7 @@ export const handleDiscordInteractions = async (event: {
       });
     }
 
-    const user = (await getLinkedStravaUserByDiscordId(discordUserId)) as
-      | StravaUserRecord
-      | undefined;
+    const user = await getLinkedStravaUserByDiscordId(discordUserId);
 
     if (!user) {
       return jsonResponse(200, {
@@ -95,27 +92,18 @@ export const handleDiscordInteractions = async (event: {
     }
 
     try {
-      const activity = await fetchLatestStravaActivity(user);
-
-      if (!activity) {
-        return jsonResponse(200, {
-          type: 4,
-          data: {
-            content: "No recent Strava activity found.",
-            flags: 64,
-          },
-        });
-      }
+      const afterUnixSeconds = getCurrentWeekStartUnixSeconds();
+      const activities = await fetchStravaActivitiesSince(user, afterUnixSeconds);
 
       return jsonResponse(200, {
         type: 4,
         data: {
-          content: buildStravaActivityMessage(activity, discordUserId),
+          content: buildWeeklyStatsMessage(activities),
           flags: 64,
         },
       });
     } catch (error) {
-      console.error("Failed to fetch latest Strava activity", {
+      console.error("Failed to fetch weekly Strava stats", {
         discordUserId,
         error,
       });
@@ -123,7 +111,7 @@ export const handleDiscordInteractions = async (event: {
       return jsonResponse(200, {
         type: 4,
         data: {
-          content: "Could not load your latest Strava activity right now.",
+          content: "Could not load your weekly Strava stats right now.",
           flags: 64,
         },
       });

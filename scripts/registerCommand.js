@@ -42,8 +42,8 @@ async function register(){
      description:"Connect Strava account"
    },
    {
-     name:"get-latest",
-     description:"Show your latest Strava activity"
+     name:"stats",
+     description:"Show your weekly Strava stats"
    }
  ];
 

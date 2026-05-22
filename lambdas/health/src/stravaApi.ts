@@ -1,4 +1,4 @@
-import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { db } from "./storage";
 
 export type StravaUserRecord = {
@@ -20,10 +20,18 @@ export type StravaActivity = {
   name?: string;
   sport_type?: string;
   type?: string;
+  start_date?: string;
   distance?: number;
   moving_time?: number;
   elapsed_time?: number;
   pr_count?: number;
+};
+
+export type StoredStravaActivityRecord = StravaActivity & {
+  PK: string;
+  SK: string;
+  DiscordID: string;
+  UpdatedAt: string;
 };
 
 declare const process: {
@@ -127,6 +135,32 @@ export const getLinkedStravaUserByDiscordId = async (discordUserId: string) => {
   return result.Item as StravaUserRecord | undefined;
 };
 
+export const getStoredStravaActivitiesByDiscordId = async (
+  discordUserId: string
+) => {
+  const items: StoredStravaActivityRecord[] = [];
+  let lastEvaluatedKey: Record<string, unknown> | undefined;
+
+  do {
+    const result = await db.send(
+      new QueryCommand({
+        TableName: "ActivityBot",
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+        ExpressionAttributeValues: {
+          ":pk": `USER#${discordUserId}`,
+          ":sk": "ACTIVITY#",
+        },
+        ExclusiveStartKey: lastEvaluatedKey,
+      })
+    );
+
+    items.push(...((result.Items as StoredStravaActivityRecord[] | undefined) ?? []));
+    lastEvaluatedKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
+  } while (lastEvaluatedKey);
+
+  return items;
+};
+
 export const fetchStravaActivity = async (
   user: StravaUserRecord,
   activityId: number
@@ -158,12 +192,16 @@ export const fetchStravaActivity = async (
   return (await response.json()) as StravaActivity;
 };
 
-export const fetchLatestStravaActivity = async (user: StravaUserRecord) => {
+export const fetchStravaActivitiesSince = async (
+  user: StravaUserRecord,
+  afterUnixSeconds: number
+) => {
   const accessToken = await getStravaAccessToken(user);
+  const allActivities: StravaActivity[] = [];
 
-  const fetchActivities = async (token: string) => {
+  const fetchPage = async (token: string, page: number) => {
     const response = await fetch(
-      `${STRAVA_API_BASE}/athlete/activities?per_page=1&page=1`,
+      `${STRAVA_API_BASE}/athlete/activities?after=${afterUnixSeconds}&per_page=100&page=${page}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -174,18 +212,31 @@ export const fetchLatestStravaActivity = async (user: StravaUserRecord) => {
     return response;
   };
 
-  let response = await fetchActivities(accessToken);
+  let token = accessToken;
 
-  if (response.status === 401) {
-    const refreshed = await refreshStravaTokens(user);
-    response = await fetchActivities(refreshed.access_token);
+  for (let page = 1; page <= 10; page += 1) {
+    let response = await fetchPage(token, page);
+
+    if (response.status === 401) {
+      const refreshed = await refreshStravaTokens(user);
+      token = refreshed.access_token;
+      response = await fetchPage(token, page);
+    }
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(
+        `Failed to fetch Strava activities: ${response.status} ${errorBody}`
+      );
+    }
+
+    const activities = (await response.json()) as StravaActivity[];
+    allActivities.push(...activities);
+
+    if (activities.length < 100) {
+      break;
+    }
   }
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Failed to fetch latest Strava activity: ${response.status} ${errorBody}`);
-  }
-
-  const activities = (await response.json()) as StravaActivity[];
-  return activities[0];
+  return allActivities;
 };

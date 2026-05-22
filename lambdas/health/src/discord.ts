@@ -1,5 +1,7 @@
-import nacl from "tweetnacl";
 import { getHeader, getRawBody } from "./requestUtils";
+
+declare const Buffer: any;
+declare const require: any;
 
 declare const process: {
   env: {
@@ -21,6 +23,20 @@ const hexToUint8Array = (hex: string) => {
   return bytes;
 };
 
+const hexToBuffer = (hex: string) => Buffer.from(hex, "hex");
+
+const createEd25519PublicKey = (publicKeyHex: string) => {
+  const { createPublicKey } = require("node:crypto");
+  const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+  const publicKeyDer = Buffer.concat([spkiPrefix, hexToBuffer(publicKeyHex)]);
+
+  return createPublicKey({
+    key: publicKeyDer,
+    format: "der",
+    type: "spki",
+  });
+};
+
 export const isValidDiscordRequest = (
   event: { headers?: Record<string, string | undefined>; body?: string | null; isBase64Encoded?: boolean },
   rawBody: string
@@ -34,11 +50,13 @@ export const isValidDiscordRequest = (
   }
 
   try {
+    const { verify } = require("node:crypto");
     const message = new TextEncoder().encode(timestamp + rawBody);
-    return nacl.sign.detached.verify(
-      message,
-      hexToUint8Array(signature),
-      hexToUint8Array(publicKey)
+    return verify(
+      null,
+      Buffer.from(message),
+      createEd25519PublicKey(publicKey),
+      hexToUint8Array(signature)
     );
   } catch {
     return false;
@@ -61,4 +79,3 @@ export const buildStravaAuthorizeUrl = (discordUserId: string, clientId: string)
 
   return url.toString();
 };
-

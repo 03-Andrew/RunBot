@@ -166,7 +166,8 @@ resource "aws_iam_role_policy" "dynamo" {
       Action = [
         "dynamodb:PutItem",
         "dynamodb:GetItem",
-        "dynamodb:Query"
+        "dynamodb:Query",
+        "dynamodb:UpdateItem"
       ]
 
       Resource = [

@@ -96,6 +96,16 @@ const handleStravaWebhook = async (event) => {
             reason: "activity_fetch_failed",
         });
     }
+    await storage_1.db.send(new lib_dynamodb_1.PutCommand({
+        TableName: "ActivityBot",
+        Item: {
+            PK: `USER#${user.DiscordID}`,
+            SK: `ACTIVITY#${activity.id}`,
+            DiscordID: user.DiscordID,
+            UpdatedAt: new Date().toISOString(),
+            ...activity,
+        },
+    }));
     const discordResponse = await fetch(`https://discord.com/api/v10/channels/${process.env.DISCORD_CHANNEL_ID}/messages`, {
         method: "POST",
         headers: {

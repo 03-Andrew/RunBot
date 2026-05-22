@@ -1,10 +1,6 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildStravaAuthorizeUrl = exports.getRawDiscordBody = exports.isValidDiscordRequest = void 0;
-const tweetnacl_1 = __importDefault(require("tweetnacl"));
 const requestUtils_1 = require("./requestUtils");
 const hexToUint8Array = (hex) => {
     if (hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) {
@@ -16,6 +12,17 @@ const hexToUint8Array = (hex) => {
     }
     return bytes;
 };
+const hexToBuffer = (hex) => Buffer.from(hex, "hex");
+const createEd25519PublicKey = (publicKeyHex) => {
+    const { createPublicKey } = require("node:crypto");
+    const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+    const publicKeyDer = Buffer.concat([spkiPrefix, hexToBuffer(publicKeyHex)]);
+    return createPublicKey({
+        key: publicKeyDer,
+        format: "der",
+        type: "spki",
+    });
+};
 const isValidDiscordRequest = (event, rawBody) => {
     const publicKey = process.env.DISCORD_PUBLIC_KEY;
     const signature = (0, requestUtils_1.getHeader)(event.headers, "x-signature-ed25519");
@@ -24,8 +31,9 @@ const isValidDiscordRequest = (event, rawBody) => {
         return false;
     }
     try {
+        const { verify } = require("node:crypto");
         const message = new TextEncoder().encode(timestamp + rawBody);
-        return tweetnacl_1.default.sign.detached.verify(message, hexToUint8Array(signature), hexToUint8Array(publicKey));
+        return verify(null, Buffer.from(message), createEd25519PublicKey(publicKey), hexToUint8Array(signature));
     }
     catch {
         return false;

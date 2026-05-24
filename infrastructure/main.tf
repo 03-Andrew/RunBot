@@ -43,7 +43,7 @@ resource "aws_iam_role_policy_attachment" "basic" {
 resource "aws_lambda_function" "health" {
   function_name    = "health"
   role             = aws_iam_role.lambda_role.arn
-  runtime          = "nodejs20.x"
+  runtime          = "nodejs22.x"
   handler          = "index.handler"
   filename         = data.archive_file.health_zip.output_path
   source_code_hash = data.archive_file.health_zip.output_base64sha256

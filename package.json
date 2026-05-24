@@ -2,6 +2,9 @@
   "name": "runbot",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "npm --prefix lambdas/health run build",
     "terraform:init": "terraform -chdir=infrastructure init",

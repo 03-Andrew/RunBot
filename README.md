@@ -7,6 +7,7 @@ Minimal AWS serverless backend for a Strava + Discord bot.
 - Node.js + TypeScript
 - AWS Lambda
 - API Gateway HTTP API
+- Amazon SQS for webhook retry processing
 - Terraform
 
 ## Environment
@@ -40,7 +41,7 @@ terraform init
 terraform apply
 ```
 
-Terraform only creates the Lambda and API Gateway MVP resources. The Lambda zip is built before `terraform apply` and is read from `lambdas/health/dist/health.zip` by default.
+Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs. The Lambda zip is built before `terraform apply` and is read from `lambdas/health/dist/health.zip` by default.
 
 ## Test
 
@@ -66,3 +67,7 @@ API_URL/discord-interactions
 
 The Lambda verifies `X-Signature-Ed25519` and `X-Signature-Timestamp` using
 the Discord application public key before responding to Discord's PING request.
+
+## Strava Webhooks
+
+The `/strava/webhook` endpoint now only validates the webhook and enqueues a job in SQS. A worker Lambda consumes that job, fetches the Strava activity, stores it in DynamoDB, and posts to Discord. Failed jobs are retried automatically and moved to the DLQ after repeated failures.

@@ -20,7 +20,6 @@ export const handler = async (event: any) => {
   if (path === "/discord-interactions" && method === "POST") {
     return handleDiscordInteractions(event);
   }
-
   return {
     statusCode: 404,
     body: "Not Found",

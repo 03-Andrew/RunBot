@@ -44,6 +44,10 @@ async function register(){
    {
      name:"stats",
      description:"Show your weekly Strava stats"
+   }, 
+   {
+     name:"help",
+     description:"Show available commands"
    }
  ];
 

@@ -15,6 +15,13 @@ const handleDiscordInteractions = async (event) => {
         };
     }
     const body = JSON.parse(rawBody || "{}");
+    const helpMessage = [
+        "**Available commands**",
+        "`/health` - Check bot health",
+        "`/strava` - Connect your Strava account",
+        "`/stats` - Show your weekly Strava stats",
+        "`/help` - Show this message",
+    ].join("\n");
     if (body.type === 1) {
         return (0, http_1.jsonResponse)(200, { type: 1 });
     }
@@ -41,6 +48,15 @@ const handleDiscordInteractions = async (event) => {
             type: 4,
             data: {
                 content: `Connect Strava:\n${(0, discord_1.buildStravaAuthorizeUrl)(discordUserId, clientId)}`,
+            },
+        });
+    }
+    if (body.data?.name === "help") {
+        return (0, http_1.jsonResponse)(200, {
+            type: 4,
+            data: {
+                content: helpMessage,
+                flags: 64,
             },
         });
     }

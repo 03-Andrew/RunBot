@@ -1,17 +1,16 @@
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { db } from "../storage";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { jsonResponse, textResponse } from "../http";
 import { getRawBody } from "../requestUtils";
-import { buildStravaActivityMessage } from "../stravaActivityMessage";
-import { fetchStravaActivity, type StravaUserRecord } from "../stravaApi";
+import type { StravaWebhookJob } from "../stravaWebhookJob";
 
 declare const process: {
   env: {
     VERIFY_TOKEN?: string;
-    DISCORD_BOT_TOKEN?: string;
-    DISCORD_CHANNEL_ID?: string;
+    SQS_QUEUE_URL?: string;
   };
 };
+
+const sqs = new SQSClient({});
 
 export const handleStravaWebhook = async (event: {
   body?: string | null;
@@ -74,115 +73,44 @@ export const handleStravaWebhook = async (event: {
     });
   }
 
-  console.log("Looking up linked Discord user", {
-    gsi1pk: `STRAVA#${owner}`,
-  });
-
-  const result = await db.send(
-    new QueryCommand({
-      TableName: "ActivityBot",
-      IndexName: "GSI1",
-      KeyConditionExpression: "GSI1PK=:pk",
-      ExpressionAttributeValues: {
-        ":pk": `STRAVA#${owner}`,
-      },
-    })
-  );
-
-  const user = result.Items?.[0];
-
-  if (!user) {
-    console.log("No user found");
-
-    return jsonResponse(200, {
-      ignored: true,
-    });
+  const queueUrl = process.env.SQS_QUEUE_URL;
+  if (!queueUrl) {
+    console.error("SQS queue is not configured");
+    return textResponse(500, "Queue not configured");
   }
 
-  console.log("Found Discord user:", user.DiscordID);
-
-  if (!process.env.DISCORD_BOT_TOKEN || !process.env.DISCORD_CHANNEL_ID) {
-    console.error("Discord notification is not configured", {
-      hasBotToken: Boolean(process.env.DISCORD_BOT_TOKEN),
-      hasChannelId: Boolean(process.env.DISCORD_CHANNEL_ID),
-    });
-
-    return jsonResponse(200, {
-      received: true,
-      discordId: user.DiscordID,
-      notified: false,
-      reason: "discord_not_configured",
-    });
-  }
-
-  const typedUser = user as StravaUserRecord;
-  let activity;
+  const message: StravaWebhookJob = {
+    ownerId: owner,
+    activityId,
+    objectType,
+    aspectType,
+  };
 
   try {
-    activity = await fetchStravaActivity(typedUser, activityId);
+    const response = await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: JSON.stringify(message),
+      })
+    );
+
+    console.log("Queued Strava webhook job", {
+      ownerId: owner,
+      activityId,
+      messageId: response.MessageId,
+    });
+
+    return jsonResponse(200, {
+      queued: true,
+      received: true,
+    });
   } catch (error) {
-    console.error("Failed to fetch Strava activity", {
+    console.error("Failed to queue Strava webhook job", {
+      ownerId: owner,
       activityId,
       error,
     });
 
-    return jsonResponse(200, {
-      received: true,
-      discordId: user.DiscordID,
-      notified: false,
-      reason: "activity_fetch_failed",
-    });
+    return textResponse(500, "Failed to queue webhook");
   }
-
-  await db.send(
-    new PutCommand({
-      TableName: "ActivityBot",
-      Item: {
-        PK: `USER#${user.DiscordID}`,
-        SK: `ACTIVITY#${activity.id}`,
-        DiscordID: user.DiscordID,
-        UpdatedAt: new Date().toISOString(),
-        ...activity,
-      },
-    })
-  );
-
-  const discordResponse = await fetch(
-    `https://discord.com/api/v10/channels/${process.env.DISCORD_CHANNEL_ID}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        content: buildStravaActivityMessage(activity, user.DiscordID),
-      }),
-    }
-  );
-
-  console.log("Discord API response", discordResponse);
-
-  if (!discordResponse.ok) {
-    const errorBody = await discordResponse.text();
-    console.error("Discord message failed", {
-      status: discordResponse.status,
-      body: errorBody,
-    });
-
-    return jsonResponse(200, {
-      received: true,
-      discordId: user.DiscordID,
-      notified: false,
-      discordStatus: discordResponse.status,
-    });
-  }
-
-  console.log("Discord message sent");
-
-  return jsonResponse(200, {
-    received: true,
-    discordId: user.DiscordID,
-    notified: true,
-  });
 };

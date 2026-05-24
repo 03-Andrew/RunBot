@@ -35,6 +35,25 @@ resource "aws_iam_role_policy_attachment" "basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+################################
+# SQS
+################################
+
+resource "aws_sqs_queue" "strava_webhook_dlq" {
+  name                      = "strava-webhook-dlq"
+  message_retention_seconds = 1209600
+}
+
+resource "aws_sqs_queue" "strava_webhook_queue" {
+  name                       = "strava-webhook-queue"
+  visibility_timeout_seconds = 90
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.strava_webhook_dlq.arn
+    maxReceiveCount     = 5
+  })
+}
+
 
 ################################
 # Lambda
@@ -53,6 +72,28 @@ resource "aws_lambda_function" "health" {
       STRAVA_CLIENT_ID     = var.strava_client_id
       STRAVA_CLIENT_SECRET = var.strava_client_secret
       VERIFY_TOKEN         = var.verify_token
+      DISCORD_BOT_TOKEN    = var.discord_bot_token
+      DISCORD_CHANNEL_ID   = var.discord_channel_id
+      SQS_QUEUE_URL        = aws_sqs_queue.strava_webhook_queue.url
+    }
+  }
+  depends_on = [
+    aws_iam_role_policy_attachment.basic
+  ]
+}
+
+resource "aws_lambda_function" "strava_worker" {
+  function_name    = "strava-worker"
+  role             = aws_iam_role.lambda_role.arn
+  runtime          = "nodejs22.x"
+  handler          = "worker.handler"
+  filename         = data.archive_file.health_zip.output_path
+  source_code_hash = data.archive_file.health_zip.output_base64sha256
+  timeout          = 60
+  environment {
+    variables = {
+      STRAVA_CLIENT_ID     = var.strava_client_id
+      STRAVA_CLIENT_SECRET = var.strava_client_secret
       DISCORD_BOT_TOKEN    = var.discord_bot_token
       DISCORD_CHANNEL_ID   = var.discord_channel_id
     }
@@ -151,6 +192,12 @@ resource "aws_lambda_permission" "api" {
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }
 
+resource "aws_lambda_event_source_mapping" "strava_webhook_queue" {
+  event_source_arn = aws_sqs_queue.strava_webhook_queue.arn
+  function_name    = aws_lambda_function.strava_worker.arn
+  batch_size       = 1
+}
+
 resource "aws_iam_role_policy" "dynamo" {
 
   role = aws_iam_role.lambda_role.id
@@ -174,6 +221,39 @@ resource "aws_iam_role_policy" "dynamo" {
         aws_dynamodb_table.activitybot.arn,
         "${aws_dynamodb_table.activitybot.arn}/index/*"
       ]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "sqs_producer" {
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:SendMessage"
+      ]
+      Resource = aws_sqs_queue.strava_webhook_queue.arn
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "sqs_consumer" {
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ]
+      Resource = aws_sqs_queue.strava_webhook_queue.arn
     }]
   })
 }

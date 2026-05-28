@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.fetchStravaActivitiesSince = exports.fetchStravaActivity = exports.getStoredStravaActivitiesByDiscordId = exports.getLinkedStravaUserByDiscordId = exports.getStravaAccessToken = void 0;
+exports.getClubById = exports.getClubActivitiesById = exports.fetchStravaActivitiesSince = exports.fetchStravaActivity = exports.getStoredStravaActivitiesByDiscordId = exports.getLinkedStravaUserByDiscordId = exports.getStravaAccessToken = void 0;
 const lib_dynamodb_1 = require("@aws-sdk/lib-dynamodb");
 const storage_1 = require("./storage");
 const STRAVA_API_BASE = "https://www.strava.com/api/v3";
@@ -148,3 +148,48 @@ const fetchStravaActivitiesSince = async (user, afterUnixSeconds) => {
     return allActivities;
 };
 exports.fetchStravaActivitiesSince = fetchStravaActivitiesSince;
+const getClubActivitiesById = async (user, clubId, page = 1, perPage = 30) => {
+    const accessToken = await (0, exports.getStravaAccessToken)(user);
+    const fetchClubActivities = async (token) => {
+        const url = new URL(`${STRAVA_API_BASE}/clubs/${clubId}/activities`);
+        url.searchParams.set("page", String(page));
+        url.searchParams.set("per_page", String(perPage));
+        return fetch(url, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+    };
+    let response = await fetchClubActivities(accessToken);
+    if (response.status === 401) {
+        const refreshed = await refreshStravaTokens(user);
+        response = await fetchClubActivities(refreshed.access_token);
+    }
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Failed to fetch Strava club activities: ${response.status} ${errorBody}`);
+    }
+    return (await response.json());
+};
+exports.getClubActivitiesById = getClubActivitiesById;
+const getClubById = async (user, clubId) => {
+    const accessToken = await (0, exports.getStravaAccessToken)(user);
+    const fetchClub = async (token) => {
+        return fetch(`${STRAVA_API_BASE}/clubs/${clubId}`, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+    };
+    let response = await fetchClub(accessToken);
+    if (response.status === 401) {
+        const refreshed = await refreshStravaTokens(user);
+        response = await fetchClub(refreshed.access_token);
+    }
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Failed to fetch Strava club: ${response.status} ${errorBody}`);
+    }
+    return (await response.json());
+};
+exports.getClubById = getClubById;

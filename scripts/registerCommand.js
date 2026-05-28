@@ -44,6 +44,10 @@ async function register(){
    {
      name:"stats",
      description:"Show your weekly Strava stats"
+   },
+   {
+     name:"club-activities",
+     description:"List recent activities from the default Strava club"
    }, 
    {
      name:"help",

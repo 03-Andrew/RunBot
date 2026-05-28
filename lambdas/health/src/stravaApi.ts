@@ -27,6 +27,29 @@ export type StravaActivity = {
   pr_count?: number;
 };
 
+export type ClubAthlete = {
+  resource_state?: number;
+  firstname?: string;
+  lastname?: string;
+};
+
+export type ClubActivity = {
+  athlete?: ClubAthlete;
+  name?: string;
+  distance?: number;
+  moving_time?: number;
+  elapsed_time?: number;
+  total_elevation_gain?: number;
+  type?: string;
+  sport_type?: string;
+  workout_type?: number | null;
+};
+
+export type Club = {
+  id: number;
+  name?: string;
+};
+
 export type StoredStravaActivityRecord = StravaActivity & {
   PK: string;
   SK: string;
@@ -239,4 +262,67 @@ export const fetchStravaActivitiesSince = async (
   }
 
   return allActivities;
+};
+
+export const getClubActivitiesById = async (
+  user: StravaUserRecord,
+  clubId: string,
+  page = 1,
+  perPage = 30
+) => {
+  const accessToken = await getStravaAccessToken(user);
+
+  const fetchClubActivities = async (token: string) => {
+    const url = new URL(`${STRAVA_API_BASE}/clubs/${clubId}/activities`);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(perPage));
+
+    return fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  };
+
+  let response = await fetchClubActivities(accessToken);
+
+  if (response.status === 401) {
+    const refreshed = await refreshStravaTokens(user);
+    response = await fetchClubActivities(refreshed.access_token);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(
+      `Failed to fetch Strava club activities: ${response.status} ${errorBody}`
+    );
+  }
+
+  return (await response.json()) as ClubActivity[];
+};
+
+export const getClubById = async (user: StravaUserRecord, clubId: string) => {
+  const accessToken = await getStravaAccessToken(user);
+
+  const fetchClub = async (token: string) => {
+    return fetch(`${STRAVA_API_BASE}/clubs/${clubId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  };
+
+  let response = await fetchClub(accessToken);
+
+  if (response.status === 401) {
+    const refreshed = await refreshStravaTokens(user);
+    response = await fetchClub(refreshed.access_token);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to fetch Strava club: ${response.status} ${errorBody}`);
+  }
+
+  return (await response.json()) as Club;
 };

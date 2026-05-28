@@ -13,6 +13,13 @@ jobs:
 
     env:
       AWS_REGION: ap-southeast-1
+      TF_VAR_discord_public_key: ${{ secrets.DISCORD_PUBLIC_KEY }}
+      TF_VAR_discord_application_id: ${{ secrets.DISCORD_APPLICATION_ID }}
+      TF_VAR_strava_client_id: ${{ secrets.STRAVA_CLIENT_ID }}
+      TF_VAR_strava_client_secret: ${{ secrets.STRAVA_CLIENT_SECRET }}
+      TF_VAR_verify_token: ${{ secrets.VERIFY_TOKEN }}
+      TF_VAR_discord_bot_token: ${{ secrets.DISCORD_BOT_TOKEN }}
+      TF_VAR_discord_channel_id: ${{ secrets.DISCORD_CHANNEL_ID }}
 
     steps:
       - name: Checkout
@@ -59,8 +66,8 @@ jobs:
 
       - name: Terraform Init
         working-directory: infrastructure
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply
         working-directory: infrastructure
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false

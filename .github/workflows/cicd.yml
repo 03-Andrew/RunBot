@@ -20,7 +20,7 @@ jobs:
       TF_VAR_verify_token: ${{ secrets.VERIFY_TOKEN }}
       TF_VAR_discord_bot_token: ${{ secrets.DISCORD_BOT_TOKEN }}
       TF_VAR_discord_channel_id: ${{ secrets.DISCORD_CHANNEL_ID }}
-
+      TR_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

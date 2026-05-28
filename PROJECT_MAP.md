@@ -8,6 +8,7 @@ This repo is a small AWS backend for a Strava + Discord bot.
 
 - `package.json`: convenience scripts for building and Terraform.
 - `README.md`: high-level deploy and test notes.
+- `.github/workflows/cicd.yml`: GitHub Actions workflow that builds, registers commands, and deploys Terraform.
 - `PROJECT_MAP.md`: this file.
 
 ### `infrastructure/`
@@ -15,6 +16,8 @@ This repo is a small AWS backend for a Strava + Discord bot.
 Terraform for the AWS deployment.
 
 - `provider.tf`: Terraform provider setup.
+- `backend.tf`: remote S3 backend for Terraform state and lock files.
+- `bootstrap/`: one-time Terraform stack that creates the backend bucket.
 - `variables.tf`: input variables such as Discord and Strava secrets.
 - `main.tf`: the main infrastructure definition. It creates:
   - the Lambda function
@@ -91,6 +94,7 @@ The table is schema-less, so the code controls what fields each item stores.
 - `npm --prefix lambdas/health run build`: compiles TypeScript and copies production dependencies into `dist/`.
 - `node scripts/registerCommand.js`: registers Discord slash commands.
 - `terraform -chdir=infrastructure apply`: deploys AWS infrastructure.
+- `terraform -chdir=infrastructure/bootstrap apply`: creates the remote Terraform backend.
 
 ## Generated files
 

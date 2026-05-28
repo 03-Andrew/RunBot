@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - cicd
   workflow_dispatch:
 
 jobs:
@@ -12,6 +13,13 @@ jobs:
 
     env:
       AWS_REGION: ap-southeast-1
+      TF_VAR_discord_public_key: ${{ secrets.DISCORD_PUBLIC_KEY }}
+      TF_VAR_discord_application_id: ${{ secrets.DISCORD_APPLICATION_ID }}
+      TF_VAR_strava_client_id: ${{ secrets.STRAVA_CLIENT_ID }}
+      TF_VAR_strava_client_secret: ${{ secrets.STRAVA_CLIENT_SECRET }}
+      TF_VAR_verify_token: ${{ secrets.VERIFY_TOKEN }}
+      TF_VAR_discord_bot_token: ${{ secrets.DISCORD_BOT_TOKEN }}
+      TF_VAR_discord_channel_id: ${{ secrets.DISCORD_CHANNEL_ID }}
 
     steps:
       - name: Checkout
@@ -40,7 +48,7 @@ jobs:
 
       - name: Register Discord commands
         env:
-          APP_ID: ${{ secrets.DISCORD_APP_ID }}
+          APP_ID: ${{ secrets.DISCORD_APPLICATION_ID }}
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         run: node scripts/registerCommand.js
 
@@ -54,12 +62,12 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.8.5
+          terraform_version: 1.10.5
 
       - name: Terraform Init
         working-directory: infrastructure
-        run: terraform init
+        run: terraform init -input=false
 
       - name: Terraform Apply
         working-directory: infrastructure
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false

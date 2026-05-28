@@ -11,7 +11,28 @@ Terraform starts by packaging the built Lambda bundle:
 
 That means you must build the TypeScript code before running `terraform apply`.
 
-## 2. Shared IAM Role
+## 2. Remote State
+
+The root stack uses an S3 backend in `backend.tf`:
+
+- state bucket: `runbot-terraform-state`
+- state key: `activitybot/terraform.tfstate`
+- locking: S3 lockfile via `use_lockfile = true`
+
+Because the backend bucket must exist before the root stack can use it, there is a separate bootstrap stack:
+
+- `infrastructure/bootstrap/main.tf`
+- it creates the bucket used for Terraform state
+
+Recommended first-time flow:
+
+1. `terraform -chdir=infrastructure/bootstrap init`
+2. `terraform -chdir=infrastructure/bootstrap apply`
+3. `terraform -chdir=infrastructure init -migrate-state`
+4. import any already-existing AWS resources
+5. `terraform -chdir=infrastructure apply`
+
+## 3. Shared IAM Role
 
 Terraform creates one IAM role for the Lambda functions:
 
@@ -20,7 +41,7 @@ Terraform creates one IAM role for the Lambda functions:
 
 This role gives Lambda permission to write CloudWatch logs.
 
-## 3. SQS Retry Flow
+## 4. SQS Retry Flow
 
 Terraform now adds SQS for webhook retries:
 
@@ -35,7 +56,7 @@ Queue settings:
 
 This is what makes retry handling work for transient failures and cold starts.
 
-## 4. HTTP Lambda
+## 5. HTTP Lambda
 
 Terraform keeps the original HTTP Lambda:
 
@@ -52,7 +73,7 @@ This Lambda handles:
 For `/strava/webhook`, it now only validates the request and sends a job to SQS.
 For `/discord-interactions`, `/stats` and `/club-activities` now enqueue a job in SQS and return a deferred interaction response.
 
-## 5. Worker Lambda
+## 6. Worker Lambda
 
 Terraform adds a second Lambda:
 
@@ -71,7 +92,7 @@ It also processes deferred Discord slash commands:
 - fetches weekly stats or club activities
 - posts the final result back through Discord's interaction follow-up webhook
 
-## 6. API Gateway Routes
+## 7. API Gateway Routes
 
 Terraform creates an HTTP API Gateway and routes them to the HTTP Lambda:
 
@@ -85,7 +106,20 @@ Terraform creates an HTTP API Gateway and routes them to the HTTP Lambda:
 
 API Gateway still talks to the same HTTP Lambda, so the public API shape does not change.
 
-## 7. SQS Event Source Mapping
+## 8. CI/CD
+
+The GitHub Actions workflow:
+
+- installs Lambda dependencies
+- runs `npx tsc` in `lambdas/health`
+- builds the Lambda bundle
+- registers Discord commands
+- runs `terraform init -input=false`
+- runs `terraform apply -auto-approve -input=false`
+
+It expects the required secrets to be provided as `TF_VAR_*` environment variables and AWS credentials to be present in GitHub Secrets.
+
+## 9. SQS Event Source Mapping
 
 Terraform connects the queue to the worker Lambda:
 
@@ -97,7 +131,7 @@ This tells AWS to:
 - invoke the worker Lambda
 - retry automatically on failures
 
-## 8. IAM Permissions
+## 10. IAM Permissions
 
 Terraform grants the Lambda role the required permissions:
 

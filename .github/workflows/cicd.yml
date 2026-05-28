@@ -41,7 +41,7 @@ jobs:
 
       - name: Register Discord commands
         env:
-          APP_ID: ${{ secrets.DISCORD_APP_ID }}
+          APP_ID: ${{ secrets.DISCORD_APPLICATION_ID }}
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         run: node scripts/registerCommand.js
 

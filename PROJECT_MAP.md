@@ -21,6 +21,7 @@ Terraform for the AWS deployment.
 - `variables.tf`: input variables such as Discord and Strava secrets.
 - `main.tf`: the main infrastructure definition. It creates:
   - the Lambda function
+  - the AI Lambda function
   - API Gateway routes
   - the DynamoDB table
   - IAM permissions
@@ -33,6 +34,15 @@ This is the actual application code that runs in Lambda.
 - `package.json`: Lambda-local dependencies and build script.
 - `tsconfig.json`: TypeScript compiler settings.
 - `scripts/copy-prod-deps.js`: copies production dependencies into `dist/node_modules` after build.
+- `src/`: TypeScript source.
+- `dist/`: compiled output that Terraform packages and deploys. This is generated, not edited by hand.
+
+### `lambdas/aiAnalysis/`
+
+AI-based run analysis Lambda.
+
+- `package.json`: Lambda-local build script.
+- `tsconfig.json`: TypeScript compiler settings.
 - `src/`: TypeScript source.
 - `dist/`: compiled output that Terraform packages and deploys. This is generated, not edited by hand.
 

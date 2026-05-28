@@ -46,6 +46,10 @@ jobs:
         working-directory: lambdas/health
         run: npm run build
 
+      - name: Build AI Lambda bundle
+        working-directory: lambdas/aiAnalysis
+        run: npm run build
+
       - name: Register Discord commands
         env:
           APP_ID: ${{ secrets.DISCORD_APPLICATION_ID }}

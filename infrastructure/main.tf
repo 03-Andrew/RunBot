@@ -8,6 +8,12 @@ data "archive_file" "health_zip" {
   output_path = "../lambdas/health/function.zip"
 }
 
+data "archive_file" "ai_zip" {
+  type        = "zip"
+  source_dir  = "../lambdas/aiAnalysis/dist"
+  output_path = "../lambdas/aiAnalysis/function.zip"
+}
+
 
 ################################
 # IAM Role
@@ -106,16 +112,16 @@ resource "aws_lambda_function" "strava_worker" {
 }
 
 resource "aws_lambda_function" "ai_worker" {
-  function_name = "ai-worker"
-  role = aws_iam_role.lambda_role.arn
-  runtime = "nodejs22.x"
-  handler = "ai_worker.handler"
-  filename = data.archive_file.ai_zip.output_path
+  function_name    = "ai-worker"
+  role             = aws_iam_role.lambda_role.arn
+  runtime          = "nodejs22.x"
+  handler          = "ai_worker.handler"
+  filename         = data.archive_file.ai_zip.output_path
   source_code_hash = data.archive_file.ai_zip.output_base64sha256
-  timeout = 60
+  timeout          = 60
   environment {
     variables = {
-      GEMINI_API_KEY = var.gemini_api_key
+      GEMINI_API_KEY       = var.gemini_api_key
       STRAVA_CLIENT_ID     = var.strava_client_id
       STRAVA_CLIENT_SECRET = var.strava_client_secret
       DISCORD_BOT_TOKEN    = var.discord_bot_token

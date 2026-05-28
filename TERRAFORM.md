@@ -7,6 +7,7 @@ This repo uses Terraform to provision the AWS infrastructure for the RunBot back
 Terraform starts by packaging the built Lambda bundle:
 
 - `archive_file.health_zip` zips `../lambdas/health/dist`
+- `archive_file.ai_zip` zips `../lambdas/aiAnalysis/dist`
 - The resulting zip is deployed to Lambda
 
 That means you must build the TypeScript code before running `terraform apply`.
@@ -61,6 +62,7 @@ This is what makes retry handling work for transient failures and cold starts.
 Terraform keeps the original HTTP Lambda:
 
 - `aws_lambda_function.health`
+- `aws_lambda_function.ai_worker`
 
 This Lambda handles:
 

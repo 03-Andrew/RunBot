@@ -39,6 +39,8 @@ terraform -chdir=infrastructure/bootstrap init
 terraform -chdir=infrastructure/bootstrap apply
 npm --prefix lambdas/health install
 npm --prefix lambdas/health run build
+npm --prefix lambdas/aiAnalysis install
+npm --prefix lambdas/aiAnalysis run build
 cd lambdas/health/dist && zip -r health.zip .
 cd infrastructure
 terraform init

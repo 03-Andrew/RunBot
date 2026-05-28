@@ -45,6 +45,11 @@ terraform init
 terraform apply
 ```
 
+The deployment has two Terraform layers:
+
+- `infrastructure/bootstrap` creates the remote state bucket used by the main stack.
+- `infrastructure` provisions the application resources and uses the S3 backend in `backend.tf`.
+
 Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs and deferred Discord slash commands. The Lambda zip is built before `terraform apply` and is read from `lambdas/health/dist/health.zip` by default.
 
 If these AWS resources already exist from an earlier run, import them into Terraform state once before applying the root stack:
@@ -53,6 +58,30 @@ If these AWS resources already exist from an earlier run, import them into Terra
 terraform -chdir=infrastructure import aws_iam_role.lambda_role health-lambda-role
 terraform -chdir=infrastructure import aws_dynamodb_table.activitybot ActivityBot
 ```
+
+## CI/CD
+
+The GitHub Actions workflow in [.github/workflows/cicd.yml](/Users/Andrew/RunBot/.github/workflows/cicd.yml) runs on push to `main` and manual dispatch.
+
+It does four things:
+
+1. Installs Lambda dependencies.
+2. Runs `npx tsc` and builds the Lambda bundle.
+3. Registers Discord slash commands with `scripts/registerCommand.js`.
+4. Runs `terraform init` and `terraform apply` against the remote S3 backend.
+
+Required GitHub Secrets:
+
+- `DISCORD_PUBLIC_KEY`
+- `DISCORD_APPLICATION_ID`
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_CHANNEL_ID`
+- `STRAVA_CLIENT_ID`
+- `STRAVA_CLIENT_SECRET`
+- `STRAVA_STATE_SECRET`
+- `VERIFY_TOKEN`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
 
 ## Test
 

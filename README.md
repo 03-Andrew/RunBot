@@ -82,6 +82,7 @@ Required GitHub Secrets:
 - `VERIFY_TOKEN`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
+- `GEMINI_API_KEY`
 
 ## Test
 

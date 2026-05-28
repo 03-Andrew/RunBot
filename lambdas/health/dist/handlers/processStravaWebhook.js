@@ -124,7 +124,7 @@ const handleWebhookJob = async (job) => {
 };
 const handleDiscordSlashCommandJob = async (job) => {
     const user = await (0, stravaApi_1.getLinkedStravaUserByDiscordId)(job.discordUserId);
-    if (!user) {
+    if (!user && job.commandName !== "ai-chat") {
         const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, "No Strava account is linked yet. Run `/strava` first.");
         if (!response.ok) {
             const errorBody = await response.text();
@@ -132,10 +132,23 @@ const handleDiscordSlashCommandJob = async (job) => {
         }
         return;
     }
+    const linkedUser = user;
     try {
+        if (job.commandName === "ai-chat") {
+            const analysis = await callAiCoach({
+                prompt: job.prompt ?? "",
+                discordUserId: job.discordUserId,
+            });
+            const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, analysis || "Could not generate a response right now.");
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`Discord follow-up failed: ${response.status} ${errorBody}`);
+            }
+            return;
+        }
         if (job.commandName === "stats") {
             const afterUnixSeconds = (0, stravaStats_1.getCurrentWeekStartUnixSeconds)();
-            const activities = await (0, stravaApi_1.fetchStravaActivitiesSince)(user, afterUnixSeconds);
+            const activities = await (0, stravaApi_1.fetchStravaActivitiesSince)(linkedUser, afterUnixSeconds);
             const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, (0, stravaStats_1.buildWeeklyStatsMessage)(activities));
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -146,7 +159,7 @@ const handleDiscordSlashCommandJob = async (job) => {
         if (job.commandName === "analyse-run") {
             const lookbackSince = Math.floor(Date.now() / 1000) - RECENT_LOOKBACK_DAYS * 24 * 60 * 60;
             const [recentActivities, storedActivities] = await Promise.all([
-                (0, stravaApi_1.fetchStravaActivitiesSince)(user, lookbackSince),
+                (0, stravaApi_1.fetchStravaActivitiesSince)(linkedUser, lookbackSince),
                 (0, stravaApi_1.getStoredStravaActivitiesByDiscordId)(job.discordUserId),
             ]);
             const allRuns = dedupeAndSortRuns([...recentActivities, ...storedActivities]);
@@ -176,8 +189,8 @@ const handleDiscordSlashCommandJob = async (job) => {
             }
             return;
         }
-        const club = await (0, stravaApi_1.getClubById)(user, DEFAULT_CLUB_ID);
-        const activities = await (0, stravaApi_1.getClubActivitiesById)(user, DEFAULT_CLUB_ID, 1, 30);
+        const club = await (0, stravaApi_1.getClubById)(linkedUser, DEFAULT_CLUB_ID);
+        const activities = await (0, stravaApi_1.getClubActivitiesById)(linkedUser, DEFAULT_CLUB_ID, 1, 30);
         const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, (0, stravaClubActivitiesMessage_1.buildClubActivitiesMessageForClub)(activities, club.name ?? "", DEFAULT_CLUB_ID));
         if (!response.ok) {
             const errorBody = await response.text();

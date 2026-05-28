@@ -7,6 +7,10 @@ const http_1 = require("../http");
 const client_sqs_1 = require("@aws-sdk/client-sqs");
 const sqs = new client_sqs_1.SQSClient({});
 const getSubcommandName = (options) => options?.find((option) => option?.type === 1)?.name;
+const getStringOptionValue = (options, name) => {
+    const option = options?.find((entry) => entry?.name === name && entry?.type === 3);
+    return typeof option?.value === "string" ? option.value : undefined;
+};
 const handleDiscordInteractions = async (event) => {
     const rawBody = (0, requestUtils_1.getRawBody)(event);
     if (!(0, discord_1.isValidDiscordRequest)(event, rawBody)) {
@@ -23,6 +27,7 @@ const handleDiscordInteractions = async (event) => {
         "`/stats` - Queue your weekly Strava stats",
         "`/club-activities` - Queue recent activities from the default Strava club",
         "`/analyse run` - Queue an AI review of your latest run and training trend",
+        "`/ai <prompt>` - Chat with the AI coach using natural language",
         "`/help` - Show this message",
     ].join("\n");
     if (body.type === 1) {
@@ -62,6 +67,70 @@ const handleDiscordInteractions = async (event) => {
                 // flags: 64,
             },
         });
+    }
+    if (body.data?.name === "ai") {
+        const discordUserId = body.member?.user?.id ?? body.user?.id;
+        const prompt = getStringOptionValue(body.data?.options, "prompt")?.trim();
+        if (!discordUserId) {
+            return (0, http_1.jsonResponse)(200, {
+                type: 4,
+                data: {
+                    content: "Could not identify your Discord user.",
+                },
+            });
+        }
+        if (!prompt) {
+            return (0, http_1.jsonResponse)(200, {
+                type: 4,
+                data: {
+                    content: "Please provide a prompt for `/ai`.",
+                },
+            });
+        }
+        const queueUrl = process.env.SQS_QUEUE_URL;
+        if (!queueUrl) {
+            console.error("SQS queue is not configured");
+            return (0, http_1.jsonResponse)(200, {
+                type: 4,
+                data: {
+                    content: "Queue is not configured yet.",
+                },
+            });
+        }
+        const message = {
+            kind: "discord-slash-command",
+            commandName: "ai-chat",
+            interactionToken: body.token,
+            discordUserId,
+            prompt,
+        };
+        try {
+            const response = await sqs.send(new client_sqs_1.SendMessageCommand({
+                QueueUrl: queueUrl,
+                MessageBody: JSON.stringify(message),
+            }));
+            console.log("Queued Discord slash command job", {
+                commandName: "ai-chat",
+                discordUserId,
+                messageId: response.MessageId,
+            });
+            return (0, http_1.jsonResponse)(200, {
+                type: 5,
+            });
+        }
+        catch (error) {
+            console.error("Failed to queue Discord slash command job", {
+                commandName: "ai-chat",
+                discordUserId,
+                error,
+            });
+            return (0, http_1.jsonResponse)(200, {
+                type: 4,
+                data: {
+                    content: "Could not queue your AI request right now.",
+                },
+            });
+        }
     }
     if (body.data?.name === "stats") {
         const discordUserId = body.member?.user?.id ?? body.user?.id;

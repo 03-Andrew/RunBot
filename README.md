@@ -114,6 +114,8 @@ the Discord application public key before responding to Discord's PING request.
 
 The slash-command flow now supports `/analyse run`, which queues an AI analysis job. The worker gathers recent and historical Strava runs, sends them to the AI endpoint, and posts the resulting coaching report back to Discord.
 
+The `/ai` slash command accepts freeform natural-language prompts. It uses a small tool-calling loop so Gemini can request Strava data such as the latest run, recent runs, weekly stats, or run comparisons before answering.
+
 The AI endpoint is also exposed at:
 
 ```text

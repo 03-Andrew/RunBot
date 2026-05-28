@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
+const agent_1 = require("./agent");
 const jsonResponse = (statusCode, body) => ({
     statusCode,
     headers: { "Content-Type": "application/json" },
@@ -102,12 +103,31 @@ const handler = async (event) => {
         return jsonResponse(500, { error: "GEMINI_API_KEY is not configured" });
     }
     let input;
+    let rawInput;
     try {
-        input = JSON.parse(getRawBody(event) || "{}");
+        rawInput = JSON.parse(getRawBody(event) || "{}");
     }
     catch {
         return jsonResponse(400, { error: "Invalid JSON body" });
     }
+    if (rawInput &&
+        typeof rawInput === "object" &&
+        typeof rawInput.prompt === "string" &&
+        typeof rawInput.discordUserId === "string") {
+        const chatInput = rawInput;
+        try {
+            const analysis = await (0, agent_1.runNaturalLanguageAi)(chatInput.prompt, chatInput.discordUserId);
+            return jsonResponse(200, { analysis });
+        }
+        catch (error) {
+            console.error("AI chat request failed", {
+                discordUserId: chatInput.discordUserId,
+                error,
+            });
+            return jsonResponse(500, { error: "Failed to generate chat response" });
+        }
+    }
+    input = rawInput;
     const prompt = buildPrompt(input);
     try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? "gemini-2.5-flash"}:generateContent`, {

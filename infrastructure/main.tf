@@ -278,6 +278,31 @@ resource "aws_iam_role_policy" "dynamo" {
   })
 }
 
+resource "aws_iam_role_policy" "ai_dynamo" {
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [{
+
+      Effect = "Allow"
+
+      Action = [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem"
+      ]
+
+      Resource = [
+        aws_dynamodb_table.activitybot.arn,
+        "${aws_dynamodb_table.activitybot.arn}/index/*"
+      ]
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "sqs_producer" {
   role = aws_iam_role.lambda_role.id
 

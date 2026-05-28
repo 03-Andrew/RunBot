@@ -61,6 +61,18 @@ async function register(){
      ]
    },
    {
+     name:"ai",
+     description:"Chat with the AI coach",
+     options:[
+       {
+         type:3,
+         name:"prompt",
+         description:"What do you want to ask the coach?",
+         required:true
+       }
+     ]
+   },
+   {
      name:"help",
      description:"Show available commands"
    }

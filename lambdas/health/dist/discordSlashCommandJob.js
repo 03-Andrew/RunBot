@@ -9,7 +9,8 @@ const isDiscordSlashCommandJob = (value) => {
     return (job.kind === "discord-slash-command" &&
         (job.commandName === "stats" ||
             job.commandName === "club-activities" ||
-            job.commandName === "analyse-run") &&
+            job.commandName === "analyse-run" ||
+            job.commandName === "ai-chat") &&
         typeof job.interactionToken === "string" &&
         job.interactionToken.length > 0 &&
         typeof job.discordUserId === "string" &&

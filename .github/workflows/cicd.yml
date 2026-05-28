@@ -46,6 +46,10 @@ jobs:
         working-directory: lambdas/health
         run: npm run build
 
+      - name: Install AI Lambda dependencies
+        working-directory: lambdas/aiAnalysis
+        run: npm ci
+
       - name: Build AI Lambda bundle
         working-directory: lambdas/aiAnalysis
         run: npm run build

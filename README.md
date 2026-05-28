@@ -35,6 +35,8 @@ export TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
 ## Deploy
 
 ```bash
+terraform -chdir=infrastructure/bootstrap init
+terraform -chdir=infrastructure/bootstrap apply
 npm --prefix lambdas/health install
 npm --prefix lambdas/health run build
 cd lambdas/health/dist && zip -r health.zip .
@@ -44,6 +46,13 @@ terraform apply
 ```
 
 Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs and deferred Discord slash commands. The Lambda zip is built before `terraform apply` and is read from `lambdas/health/dist/health.zip` by default.
+
+If these AWS resources already exist from an earlier run, import them into Terraform state once before applying the root stack:
+
+```bash
+terraform -chdir=infrastructure import aws_iam_role.lambda_role health-lambda-role
+terraform -chdir=infrastructure import aws_dynamodb_table.activitybot ActivityBot
+```
 
 ## Test
 

@@ -1,4 +1,5 @@
 export type StravaWebhookJob = {
+  kind: "strava-webhook";
   ownerId: number;
   activityId: number;
   objectType: string;
@@ -13,6 +14,7 @@ export const isStravaWebhookJob = (value: unknown): value is StravaWebhookJob =>
   const job = value as Partial<StravaWebhookJob>;
 
   return (
+    (job.kind === undefined || job.kind === "strava-webhook") &&
     typeof job.ownerId === "number" &&
     Number.isFinite(job.ownerId) &&
     typeof job.activityId === "number" &&

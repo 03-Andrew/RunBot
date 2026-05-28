@@ -50,6 +50,7 @@ This Lambda handles:
 - `POST /strava/webhook`
 
 For `/strava/webhook`, it now only validates the request and sends a job to SQS.
+For `/discord-interactions`, `/stats` and `/club-activities` now enqueue a job in SQS and return a deferred interaction response.
 
 ## 5. Worker Lambda
 
@@ -63,6 +64,12 @@ This Lambda processes the queued webhook job:
 - fetches the Strava activity
 - stores activity data in DynamoDB
 - posts the Discord notification
+
+It also processes deferred Discord slash commands:
+
+- looks up the linked Strava user
+- fetches weekly stats or club activities
+- posts the final result back through Discord's interaction follow-up webhook
 
 ## 6. API Gateway Routes
 

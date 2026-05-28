@@ -42,7 +42,7 @@ This is the actual application code that runs in Lambda.
 ### Route handlers
 
 - `src/handlers/health.ts`: `GET /health` response.
-- `src/handlers/discordInteractions.ts`: Discord slash command webhook handler.
+- `src/handlers/discordInteractions.ts`: Discord slash command webhook handler that defers slow commands to SQS.
 - `src/handlers/stravaCallback.ts`: Strava OAuth callback after a user connects their account.
 - `src/handlers/stravaWebhook.ts`: Strava webhook receiver for new activities and updates.
 
@@ -63,11 +63,12 @@ This is the actual application code that runs in Lambda.
 1. Discord sends an interaction to `/discord-interactions`.
 2. The Lambda verifies the request signature.
 3. `/strava` returns a Strava connect URL.
-4. Strava redirects back to `/strava/callback` after OAuth.
-5. The callback stores the user tokens in DynamoDB.
-6. Strava webhook events arrive at `/strava/webhook`.
-7. The webhook fetches the activity details from Strava, stores a copy in DynamoDB, and posts a message to Discord.
-8. `/stats` reads this week’s Strava activities and returns a weekly summary.
+4. `/stats` and `/club-activities` enqueue an SQS job and return a deferred Discord response.
+5. Strava redirects back to `/strava/callback` after OAuth.
+6. The callback stores the user tokens in DynamoDB.
+7. Strava webhook events arrive at `/strava/webhook`.
+8. The webhook fetches the activity details from Strava, stores a copy in DynamoDB, and posts a message to Discord.
+9. The worker later posts the final slash-command result back to Discord through the interaction follow-up webhook.
 
 ## DynamoDB layout
 
@@ -99,4 +100,3 @@ Do not edit these by hand:
 - `lambdas/health/function.zip`
 
 They are produced by the build/package flow.
-

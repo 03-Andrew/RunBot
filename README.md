@@ -7,7 +7,7 @@ Minimal AWS serverless backend for a Strava + Discord bot.
 - Node.js + TypeScript
 - AWS Lambda
 - API Gateway HTTP API
-- Amazon SQS for webhook retry processing
+- Amazon SQS for webhook retry processing and deferred slash commands
 - Terraform
 
 ## Environment
@@ -19,6 +19,7 @@ AWS_ACCESS_KEY=YOUR_KEY
 AWS_SECRET_KEY=YOUR_SECRET
 AWS_REGION=ap-southeast-1
 TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
+TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
 ```
 
 Terraform uses the standard AWS provider credential chain. Export credentials before applying:
@@ -28,6 +29,7 @@ export AWS_ACCESS_KEY_ID=YOUR_KEY
 export AWS_SECRET_ACCESS_KEY=YOUR_SECRET
 export AWS_REGION=ap-southeast-1
 export TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
+export TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
 ```
 
 ## Deploy
@@ -41,7 +43,7 @@ terraform init
 terraform apply
 ```
 
-Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs. The Lambda zip is built before `terraform apply` and is read from `lambdas/health/dist/health.zip` by default.
+Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs and deferred Discord slash commands. The Lambda zip is built before `terraform apply` and is read from `lambdas/health/dist/health.zip` by default.
 
 ## Test
 
@@ -70,4 +72,4 @@ the Discord application public key before responding to Discord's PING request.
 
 ## Strava Webhooks
 
-The `/strava/webhook` endpoint now only validates the webhook and enqueues a job in SQS. A worker Lambda consumes that job, fetches the Strava activity, stores it in DynamoDB, and posts to Discord. Failed jobs are retried automatically and moved to the DLQ after repeated failures.
+The `/strava/webhook` endpoint now only validates the webhook and enqueues a job in SQS. A worker Lambda consumes that job, fetches the Strava activity, stores it in DynamoDB, and posts to Discord. The `/discord-interactions` endpoint now defers `/stats` and `/club-activities` by enqueuing work in SQS, then the worker posts the final response back through Discord's interaction follow-up webhook. Failed jobs are retried automatically and moved to the DLQ after repeated failures.

@@ -22,6 +22,10 @@ variable "discord_bot_token" {
   sensitive = true
 }
 
+variable "discord_application_id" {
+  type = string
+}
+
 variable "discord_channel_id" {
   type = string
 }

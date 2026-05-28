@@ -52,6 +52,7 @@ const handleStravaWebhook = async (event) => {
         return (0, http_1.textResponse)(500, "Queue not configured");
     }
     const message = {
+        kind: "strava-webhook",
         ownerId: owner,
         activityId,
         objectType,

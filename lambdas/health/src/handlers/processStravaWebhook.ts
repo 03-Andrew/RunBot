@@ -1,11 +1,22 @@
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { buildClubActivitiesMessageForClub } from "../stravaClubActivitiesMessage";
 import { db } from "../storage";
 import { buildStravaActivityMessage } from "../stravaActivityMessage";
 import {
   fetchStravaActivity,
+  fetchStravaActivitiesSince,
+  getClubActivitiesById,
+  getClubById,
+  getLinkedStravaUserByDiscordId,
   type StravaUserRecord,
 } from "../stravaApi";
 import { isStravaWebhookJob, type StravaWebhookJob } from "../stravaWebhookJob";
+import {
+  isDiscordSlashCommandJob,
+  type DiscordSlashCommandJob,
+} from "../discordSlashCommandJob";
+import { buildWeeklyStatsMessage, getCurrentWeekStartUnixSeconds } from "../stravaStats";
+import { postDiscordInteractionFollowUp } from "../discordFollowup";
 
 declare const process: {
   env: {
@@ -13,6 +24,8 @@ declare const process: {
     DISCORD_CHANNEL_ID?: string;
   };
 };
+
+const DEFAULT_CLUB_ID = "1600752";
 
 const postDiscordMessage = async (content: string) => {
   if (!process.env.DISCORD_BOT_TOKEN || !process.env.DISCORD_CHANNEL_ID) {
@@ -92,6 +105,84 @@ const handleWebhookJob = async (job: StravaWebhookJob) => {
   });
 };
 
+const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
+  const user = await getLinkedStravaUserByDiscordId(job.discordUserId);
+
+  if (!user) {
+    const response = await postDiscordInteractionFollowUp(
+      job.interactionToken,
+      "No Strava account is linked yet. Run `/strava` first."
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(
+        `Discord follow-up failed: ${response.status} ${errorBody}`
+      );
+    }
+
+    return;
+  }
+
+  try {
+    if (job.commandName === "stats") {
+      const afterUnixSeconds = getCurrentWeekStartUnixSeconds();
+      const activities = await fetchStravaActivitiesSince(user, afterUnixSeconds);
+      const response = await postDiscordInteractionFollowUp(
+        job.interactionToken,
+        buildWeeklyStatsMessage(activities)
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(
+          `Discord follow-up failed: ${response.status} ${errorBody}`
+        );
+      }
+
+      return;
+    }
+
+    const club = await getClubById(user, DEFAULT_CLUB_ID);
+    const activities = await getClubActivitiesById(user, DEFAULT_CLUB_ID, 1, 30);
+    const response = await postDiscordInteractionFollowUp(
+      job.interactionToken,
+      buildClubActivitiesMessageForClub(
+        activities,
+        club.name ?? "",
+        DEFAULT_CLUB_ID
+      )
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(
+        `Discord follow-up failed: ${response.status} ${errorBody}`
+      );
+    }
+  } catch (error) {
+    console.error("Failed to process Discord slash command", {
+      commandName: job.commandName,
+      discordUserId: job.discordUserId,
+      error,
+    });
+
+    const response = await postDiscordInteractionFollowUp(
+      job.interactionToken,
+      job.commandName === "stats"
+        ? "Could not load your weekly Strava stats right now."
+        : "Could not load club activities right now."
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(
+        `Discord follow-up failed: ${response.status} ${errorBody}`
+      );
+    }
+  }
+};
+
 export const handleProcessStravaWebhook = async (event: {
   Records?: Array<{ body?: string }>;
 }) => {
@@ -104,10 +195,16 @@ export const handleProcessStravaWebhook = async (event: {
       throw new Error(`Invalid SQS message body: ${String(error)}`);
     }
 
-    if (!isStravaWebhookJob(parsed)) {
-      throw new Error("Invalid Strava webhook job");
+    if (isStravaWebhookJob(parsed)) {
+      await handleWebhookJob(parsed);
+      continue;
     }
 
-    await handleWebhookJob(parsed);
+    if (isDiscordSlashCommandJob(parsed)) {
+      await handleDiscordSlashCommandJob(parsed);
+      continue;
+    }
+
+    throw new Error("Invalid queue job");
   }
 };

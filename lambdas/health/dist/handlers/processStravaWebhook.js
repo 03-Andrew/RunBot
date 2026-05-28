@@ -2,10 +2,15 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleProcessStravaWebhook = void 0;
 const lib_dynamodb_1 = require("@aws-sdk/lib-dynamodb");
+const stravaClubActivitiesMessage_1 = require("../stravaClubActivitiesMessage");
 const storage_1 = require("../storage");
 const stravaActivityMessage_1 = require("../stravaActivityMessage");
 const stravaApi_1 = require("../stravaApi");
 const stravaWebhookJob_1 = require("../stravaWebhookJob");
+const discordSlashCommandJob_1 = require("../discordSlashCommandJob");
+const stravaStats_1 = require("../stravaStats");
+const discordFollowup_1 = require("../discordFollowup");
+const DEFAULT_CLUB_ID = "1600752";
 const postDiscordMessage = async (content) => {
     if (!process.env.DISCORD_BOT_TOKEN || !process.env.DISCORD_CHANNEL_ID) {
         throw new Error("Discord notification is not configured.");
@@ -62,6 +67,50 @@ const handleWebhookJob = async (job) => {
         activityId: job.activityId,
     });
 };
+const handleDiscordSlashCommandJob = async (job) => {
+    const user = await (0, stravaApi_1.getLinkedStravaUserByDiscordId)(job.discordUserId);
+    if (!user) {
+        const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, "No Strava account is linked yet. Run `/strava` first.");
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`Discord follow-up failed: ${response.status} ${errorBody}`);
+        }
+        return;
+    }
+    try {
+        if (job.commandName === "stats") {
+            const afterUnixSeconds = (0, stravaStats_1.getCurrentWeekStartUnixSeconds)();
+            const activities = await (0, stravaApi_1.fetchStravaActivitiesSince)(user, afterUnixSeconds);
+            const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, (0, stravaStats_1.buildWeeklyStatsMessage)(activities));
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`Discord follow-up failed: ${response.status} ${errorBody}`);
+            }
+            return;
+        }
+        const club = await (0, stravaApi_1.getClubById)(user, DEFAULT_CLUB_ID);
+        const activities = await (0, stravaApi_1.getClubActivitiesById)(user, DEFAULT_CLUB_ID, 1, 30);
+        const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, (0, stravaClubActivitiesMessage_1.buildClubActivitiesMessageForClub)(activities, club.name ?? "", DEFAULT_CLUB_ID));
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`Discord follow-up failed: ${response.status} ${errorBody}`);
+        }
+    }
+    catch (error) {
+        console.error("Failed to process Discord slash command", {
+            commandName: job.commandName,
+            discordUserId: job.discordUserId,
+            error,
+        });
+        const response = await (0, discordFollowup_1.postDiscordInteractionFollowUp)(job.interactionToken, job.commandName === "stats"
+            ? "Could not load your weekly Strava stats right now."
+            : "Could not load club activities right now.");
+        if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`Discord follow-up failed: ${response.status} ${errorBody}`);
+        }
+    }
+};
 const handleProcessStravaWebhook = async (event) => {
     for (const record of event.Records ?? []) {
         let parsed;
@@ -71,10 +120,15 @@ const handleProcessStravaWebhook = async (event) => {
         catch (error) {
             throw new Error(`Invalid SQS message body: ${String(error)}`);
         }
-        if (!(0, stravaWebhookJob_1.isStravaWebhookJob)(parsed)) {
-            throw new Error("Invalid Strava webhook job");
+        if ((0, stravaWebhookJob_1.isStravaWebhookJob)(parsed)) {
+            await handleWebhookJob(parsed);
+            continue;
         }
-        await handleWebhookJob(parsed);
+        if ((0, discordSlashCommandJob_1.isDiscordSlashCommandJob)(parsed)) {
+            await handleDiscordSlashCommandJob(parsed);
+            continue;
+        }
+        throw new Error("Invalid queue job");
     }
 };
 exports.handleProcessStravaWebhook = handleProcessStravaWebhook;

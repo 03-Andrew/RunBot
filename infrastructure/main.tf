@@ -92,10 +92,11 @@ resource "aws_lambda_function" "strava_worker" {
   timeout          = 60
   environment {
     variables = {
-      STRAVA_CLIENT_ID     = var.strava_client_id
-      STRAVA_CLIENT_SECRET = var.strava_client_secret
-      DISCORD_BOT_TOKEN    = var.discord_bot_token
-      DISCORD_CHANNEL_ID   = var.discord_channel_id
+      STRAVA_CLIENT_ID       = var.strava_client_id
+      STRAVA_CLIENT_SECRET   = var.strava_client_secret
+      DISCORD_APPLICATION_ID = var.discord_application_id
+      DISCORD_BOT_TOKEN      = var.discord_bot_token
+      DISCORD_CHANNEL_ID     = var.discord_channel_id
     }
   }
   depends_on = [

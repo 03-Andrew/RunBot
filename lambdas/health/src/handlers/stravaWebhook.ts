@@ -80,6 +80,7 @@ export const handleStravaWebhook = async (event: {
   }
 
   const message: StravaWebhookJob = {
+    kind: "strava-webhook",
     ownerId: owner,
     activityId,
     objectType,

@@ -6,7 +6,8 @@ const isStravaWebhookJob = (value) => {
         return false;
     }
     const job = value;
-    return (typeof job.ownerId === "number" &&
+    return ((job.kind === undefined || job.kind === "strava-webhook") &&
+        typeof job.ownerId === "number" &&
         Number.isFinite(job.ownerId) &&
         typeof job.activityId === "number" &&
         Number.isFinite(job.activityId) &&

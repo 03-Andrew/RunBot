@@ -2,12 +2,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleDiscordInteractions = void 0;
 const discord_1 = require("../discord");
-const stravaStats_1 = require("../stravaStats");
-const stravaClubActivitiesMessage_1 = require("../stravaClubActivitiesMessage");
 const requestUtils_1 = require("../requestUtils");
 const http_1 = require("../http");
-const stravaApi_1 = require("../stravaApi");
-const DEFAULT_CLUB_ID = "1600752";
+const client_sqs_1 = require("@aws-sdk/client-sqs");
+const sqs = new client_sqs_1.SQSClient({});
 const handleDiscordInteractions = async (event) => {
     const rawBody = (0, requestUtils_1.getRawBody)(event);
     if (!(0, discord_1.isValidDiscordRequest)(event, rawBody)) {
@@ -21,8 +19,8 @@ const handleDiscordInteractions = async (event) => {
         "**Available commands**",
         "`/health` - Check bot health",
         "`/strava` - Connect your Strava account",
-        "`/stats` - Show your weekly Strava stats",
-        "`/club-activities` - List recent activities from a Strava club",
+        "`/stats` - Queue your weekly Strava stats",
+        "`/club-activities` - Queue recent activities from the default Strava club",
         "`/help` - Show this message",
     ].join("\n");
     if (body.type === 1) {
@@ -70,41 +68,49 @@ const handleDiscordInteractions = async (event) => {
                 type: 4,
                 data: {
                     content: "Could not identify your Discord user.",
-                    // flags: 64,
                 },
             });
         }
-        const user = await (0, stravaApi_1.getLinkedStravaUserByDiscordId)(discordUserId);
-        if (!user) {
+        const queueUrl = process.env.SQS_QUEUE_URL;
+        if (!queueUrl) {
+            console.error("SQS queue is not configured");
             return (0, http_1.jsonResponse)(200, {
                 type: 4,
                 data: {
-                    content: "No Strava account is linked yet. Run `/strava` first.",
-                    // flags: 64,
+                    content: "Queue is not configured yet.",
                 },
             });
         }
+        const message = {
+            kind: "discord-slash-command",
+            commandName: "stats",
+            interactionToken: body.token,
+            discordUserId,
+        };
         try {
-            const afterUnixSeconds = (0, stravaStats_1.getCurrentWeekStartUnixSeconds)();
-            const activities = await (0, stravaApi_1.fetchStravaActivitiesSince)(user, afterUnixSeconds);
+            const response = await sqs.send(new client_sqs_1.SendMessageCommand({
+                QueueUrl: queueUrl,
+                MessageBody: JSON.stringify(message),
+            }));
+            console.log("Queued Discord slash command job", {
+                commandName: "stats",
+                discordUserId,
+                messageId: response.MessageId,
+            });
             return (0, http_1.jsonResponse)(200, {
-                type: 4,
-                data: {
-                    content: (0, stravaStats_1.buildWeeklyStatsMessage)(activities),
-                    // flags: 64,
-                },
+                type: 5,
             });
         }
         catch (error) {
-            console.error("Failed to fetch weekly Strava stats", {
+            console.error("Failed to queue Discord slash command job", {
+                commandName: "stats",
                 discordUserId,
                 error,
             });
             return (0, http_1.jsonResponse)(200, {
                 type: 4,
                 data: {
-                    content: "Could not load your weekly Strava stats right now.",
-                    // flags: 64,
+                    content: "Could not queue your stats request right now.",
                 },
             });
         }
@@ -116,42 +122,49 @@ const handleDiscordInteractions = async (event) => {
                 type: 4,
                 data: {
                     content: "Could not identify your Discord user.",
-                    // flags: 64,
                 },
             });
         }
-        const user = await (0, stravaApi_1.getLinkedStravaUserByDiscordId)(discordUserId);
-        if (!user) {
+        const queueUrl = process.env.SQS_QUEUE_URL;
+        if (!queueUrl) {
+            console.error("SQS queue is not configured");
             return (0, http_1.jsonResponse)(200, {
                 type: 4,
                 data: {
-                    content: "No Strava account is linked yet. Run `/strava` first.",
-                    // flags: 64,
+                    content: "Queue is not configured yet.",
                 },
             });
         }
+        const message = {
+            kind: "discord-slash-command",
+            commandName: "club-activities",
+            interactionToken: body.token,
+            discordUserId,
+        };
         try {
-            const club = await (0, stravaApi_1.getClubById)(user, DEFAULT_CLUB_ID);
-            const activities = await (0, stravaApi_1.getClubActivitiesById)(user, DEFAULT_CLUB_ID, 1, 30);
+            const response = await sqs.send(new client_sqs_1.SendMessageCommand({
+                QueueUrl: queueUrl,
+                MessageBody: JSON.stringify(message),
+            }));
+            console.log("Queued Discord slash command job", {
+                commandName: "club-activities",
+                discordUserId,
+                messageId: response.MessageId,
+            });
             return (0, http_1.jsonResponse)(200, {
-                type: 4,
-                data: {
-                    content: (0, stravaClubActivitiesMessage_1.buildClubActivitiesMessageForClub)(activities, club.name ?? "", DEFAULT_CLUB_ID),
-                    // flags: 64,
-                },
+                type: 5,
             });
         }
         catch (error) {
-            console.error("Failed to fetch club activities", {
+            console.error("Failed to queue Discord slash command job", {
+                commandName: "club-activities",
                 discordUserId,
-                clubId: DEFAULT_CLUB_ID,
                 error,
             });
             return (0, http_1.jsonResponse)(200, {
                 type: 4,
                 data: {
-                    content: "Could not load club activities right now.",
-                    // flags: 64,
+                    content: "Could not queue your club request right now.",
                 },
             });
         }

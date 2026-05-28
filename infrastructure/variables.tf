@@ -25,3 +25,8 @@ variable "discord_bot_token" {
 variable "discord_channel_id" {
   type = string
 }
+
+variable "gemini_api_key" {
+  type      = string
+  sensitive = true
+}

@@ -103,7 +103,25 @@ resource "aws_lambda_function" "strava_worker" {
   ]
 }
 
+resource "aws_lambda_function" "ai_worker" {
+  function_name = "ai-worker"
+  role = aws_iam_role.lambda_role.arn
+  runtime = "nodejs22.x"
+  handler = "ai_worker.handler"
+  filename = data.archive_file.ai_zip.output_path
+  source_code_hash = data.archive_file.ai_zip.output_base64sha256
+  timeout = 60
+  environment {
+    variables = {
+      GEMINI_API_KEY = var.gemini_api_key
+      STRAVA_CLIENT_ID     = var.strava_client_id
+      STRAVA_CLIENT_SECRET = var.strava_client_secret
+      DISCORD_BOT_TOKEN    = var.discord_bot_token
+      DISCORD_CHANNEL_ID   = var.discord_channel_id
+    }
+  }
 
+}
 
 
 ################################
@@ -127,6 +145,13 @@ resource "aws_apigatewayv2_integration" "health" {
   payload_format_version = "2.0"
 }
 
+resource "aws_apigatewayv2_integration" "ai_coach" {
+  api_id                 = aws_apigatewayv2_api.api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.ai_worker.invoke_arn
+  payload_format_version = "2.0"
+}
+
 
 ################################
 # Route
@@ -142,6 +167,12 @@ resource "aws_apigatewayv2_route" "discord" {
   api_id    = aws_apigatewayv2_api.api.id
   route_key = "POST /discord-interactions"
   target    = "integrations/${aws_apigatewayv2_integration.health.id}"
+}
+
+resource "aws_apigatewayv2_route" "ai_coach" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "POST /ai-coach"
+  target    = "integrations/${aws_apigatewayv2_integration.ai_coach.id}"
 }
 
 ################################

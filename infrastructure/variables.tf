@@ -30,6 +30,11 @@ variable "discord_channel_id" {
   type = string
 }
 
+variable "ai_coach_token" {
+  type      = string
+  sensitive = true
+}
+
 variable "gemini_api_key" {
   type      = string
   sensitive = true

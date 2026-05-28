@@ -103,6 +103,8 @@ resource "aws_lambda_function" "strava_worker" {
       DISCORD_APPLICATION_ID = var.discord_application_id
       DISCORD_BOT_TOKEN      = var.discord_bot_token
       DISCORD_CHANNEL_ID     = var.discord_channel_id
+      AI_COACH_URL           = "${aws_apigatewayv2_stage.dev.invoke_url}/ai-coach"
+      AI_COACH_TOKEN         = var.ai_coach_token
       GEMINI_API_KEY         = var.gemini_api_key
     }
   }
@@ -115,19 +117,23 @@ resource "aws_lambda_function" "ai_worker" {
   function_name    = "ai-worker"
   role             = aws_iam_role.lambda_role.arn
   runtime          = "nodejs22.x"
-  handler          = "ai_worker.handler"
+  handler          = "index.handler"
   filename         = data.archive_file.ai_zip.output_path
   source_code_hash = data.archive_file.ai_zip.output_base64sha256
   timeout          = 60
   environment {
     variables = {
       GEMINI_API_KEY       = var.gemini_api_key
+      AI_COACH_TOKEN       = var.ai_coach_token
       STRAVA_CLIENT_ID     = var.strava_client_id
       STRAVA_CLIENT_SECRET = var.strava_client_secret
       DISCORD_BOT_TOKEN    = var.discord_bot_token
       DISCORD_CHANNEL_ID   = var.discord_channel_id
     }
   }
+  depends_on = [
+    aws_iam_role_policy_attachment.basic
+  ]
 
 }
 
@@ -227,6 +233,14 @@ resource "aws_lambda_permission" "api" {
   statement_id  = "AllowExecution"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.health.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
+}
+
+resource "aws_lambda_permission" "ai_api" {
+  statement_id  = "AllowExecutionAi"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ai_worker.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }

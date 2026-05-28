@@ -71,9 +71,10 @@ This Lambda handles:
 - `GET /strava/callback`
 - `GET /strava/webhook`
 - `POST /strava/webhook`
+- `POST /ai-coach`
 
 For `/strava/webhook`, it now only validates the request and sends a job to SQS.
-For `/discord-interactions`, `/stats` and `/club-activities` now enqueue a job in SQS and return a deferred interaction response.
+For `/discord-interactions`, `/stats`, `/club-activities`, and `/analyse run` now enqueue a job in SQS and return a deferred interaction response.
 
 ## 6. Worker Lambda
 
@@ -92,6 +93,7 @@ It also processes deferred Discord slash commands:
 
 - looks up the linked Strava user
 - fetches weekly stats or club activities
+- fetches recent and historical runs for `/analyse run`
 - posts the final result back through Discord's interaction follow-up webhook
 
 ## 7. API Gateway Routes
@@ -105,6 +107,7 @@ Terraform creates an HTTP API Gateway and routes them to the HTTP Lambda:
 - `aws_apigatewayv2_route.strava_callback`
 - `aws_apigatewayv2_route.strava_verify`
 - `aws_apigatewayv2_route.strava_event`
+- `aws_apigatewayv2_route.ai_coach`
 
 API Gateway still talks to the same HTTP Lambda, so the public API shape does not change.
 

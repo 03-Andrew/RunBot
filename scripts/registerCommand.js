@@ -50,6 +50,17 @@ async function register(){
      description:"List recent activities from the default Strava club"
    }, 
    {
+     name:"analyse",
+     description:"Analyse your latest run",
+     options:[
+       {
+         type:1,
+         name:"run",
+         description:"Analyse your latest run with recent and historical context"
+       }
+     ]
+   },
+   {
      name:"help",
      description:"Show available commands"
    }

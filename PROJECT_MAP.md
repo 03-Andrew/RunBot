@@ -77,11 +77,12 @@ AI-based run analysis Lambda.
 2. The Lambda verifies the request signature.
 3. `/strava` returns a Strava connect URL.
 4. `/stats` and `/club-activities` enqueue an SQS job and return a deferred Discord response.
-5. Strava redirects back to `/strava/callback` after OAuth.
-6. The callback stores the user tokens in DynamoDB.
-7. Strava webhook events arrive at `/strava/webhook`.
-8. The webhook fetches the activity details from Strava, stores a copy in DynamoDB, and posts a message to Discord.
-9. The worker later posts the final slash-command result back to Discord through the interaction follow-up webhook.
+5. `/analyse run` enqueues an SQS job and returns a deferred Discord response.
+6. Strava redirects back to `/strava/callback` after OAuth.
+7. The callback stores the user tokens in DynamoDB.
+8. Strava webhook events arrive at `/strava/webhook`.
+9. The webhook fetches the activity details from Strava, stores a copy in DynamoDB, and posts a message to Discord.
+10. The worker later posts the final slash-command result back to Discord through the interaction follow-up webhook.
 
 ## DynamoDB layout
 

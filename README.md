@@ -30,6 +30,7 @@ export AWS_SECRET_ACCESS_KEY=YOUR_SECRET
 export AWS_REGION=ap-southeast-1
 export TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
 export TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
+export TF_VAR_ai_coach_token=YOUR_RANDOM_INTERNAL_TOKEN
 ```
 
 ## Deploy
@@ -41,7 +42,6 @@ npm --prefix lambdas/health install
 npm --prefix lambdas/health run build
 npm --prefix lambdas/aiAnalysis install
 npm --prefix lambdas/aiAnalysis run build
-cd lambdas/health/dist && zip -r health.zip .
 cd infrastructure
 terraform init
 terraform apply
@@ -52,7 +52,7 @@ The deployment has two Terraform layers:
 - `infrastructure/bootstrap` creates the remote state bucket used by the main stack.
 - `infrastructure` provisions the application resources and uses the S3 backend in `backend.tf`.
 
-Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs and deferred Discord slash commands. The Lambda zip is built before `terraform apply` and is read from `lambdas/health/dist/health.zip` by default.
+Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs and deferred Discord slash commands. Terraform packages the Lambda bundles directly from `dist/` during `terraform apply`, so there is no manual zip step in the deploy flow.
 
 If these AWS resources already exist from an earlier run, import them into Terraform state once before applying the root stack:
 
@@ -81,6 +81,7 @@ Required GitHub Secrets:
 - `STRAVA_CLIENT_ID`
 - `STRAVA_CLIENT_SECRET`
 - `STRAVA_STATE_SECRET`
+- `AI_COACH_TOKEN`
 - `VERIFY_TOKEN`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
@@ -110,6 +111,14 @@ API_URL/discord-interactions
 
 The Lambda verifies `X-Signature-Ed25519` and `X-Signature-Timestamp` using
 the Discord application public key before responding to Discord's PING request.
+
+The slash-command flow now supports `/analyse run`, which queues an AI analysis job. The worker gathers recent and historical Strava runs, sends them to the AI endpoint, and posts the resulting coaching report back to Discord.
+
+The AI endpoint is also exposed at:
+
+```text
+API_URL/ai-coach
+```
 
 ## Strava Webhooks
 

@@ -8,6 +8,8 @@ import {
   getClubActivitiesById,
   getClubById,
   getLinkedStravaUserByDiscordId,
+  getStoredStravaActivitiesByDiscordId,
+  type StravaActivity,
   type StravaUserRecord,
 } from "../stravaApi";
 import { isStravaWebhookJob, type StravaWebhookJob } from "../stravaWebhookJob";
@@ -15,17 +17,24 @@ import {
   isDiscordSlashCommandJob,
   type DiscordSlashCommandJob,
 } from "../discordSlashCommandJob";
-import { buildWeeklyStatsMessage, getCurrentWeekStartUnixSeconds } from "../stravaStats";
+import {
+  calculateWeeklyStats,
+  buildWeeklyStatsMessage,
+  getCurrentWeekStartUnixSeconds,
+} from "../stravaStats";
 import { postDiscordInteractionFollowUp } from "../discordFollowup";
 
 declare const process: {
   env: {
     DISCORD_BOT_TOKEN?: string;
     DISCORD_CHANNEL_ID?: string;
+    AI_COACH_URL?: string;
+    AI_COACH_TOKEN?: string;
   };
 };
 
 const DEFAULT_CLUB_ID = "1600752";
+const RECENT_LOOKBACK_DAYS = 30;
 
 const postDiscordMessage = async (content: string) => {
   if (!process.env.DISCORD_BOT_TOKEN || !process.env.DISCORD_CHANNEL_ID) {
@@ -43,6 +52,80 @@ const postDiscordMessage = async (content: string) => {
       body: JSON.stringify({ content }),
     }
   );
+};
+
+const isRunningActivity = (activity: StravaActivity) => {
+  const labels = [activity.type, activity.sport_type].filter(
+    (label): label is string => typeof label === "string"
+  );
+
+  return labels.some((label) => /run/i.test(label));
+};
+
+const getActivityTimestamp = (activity: StravaActivity & { UpdatedAt?: string }) => {
+  if (activity.start_date) {
+    const startedAt = new Date(activity.start_date).getTime();
+    if (!Number.isNaN(startedAt)) {
+      return startedAt;
+    }
+  }
+
+  if (activity.UpdatedAt) {
+    const updatedAt = new Date(activity.UpdatedAt).getTime();
+    if (!Number.isNaN(updatedAt)) {
+      return updatedAt;
+    }
+  }
+
+  return 0;
+};
+
+const dedupeAndSortRuns = (
+  activities: Array<StravaActivity & { UpdatedAt?: string }>
+) => {
+  const deduped = new Map<number, StravaActivity & { UpdatedAt?: string }>();
+
+  for (const activity of activities) {
+    if (typeof activity.id !== "number") {
+      continue;
+    }
+
+    if (!isRunningActivity(activity)) {
+      continue;
+    }
+
+    const existing = deduped.get(activity.id);
+    if (!existing || getActivityTimestamp(activity) > getActivityTimestamp(existing)) {
+      deduped.set(activity.id, activity);
+    }
+  }
+
+  return [...deduped.values()].sort(
+    (a, b) => getActivityTimestamp(b) - getActivityTimestamp(a)
+  );
+};
+
+const callAiCoach = async (payload: unknown) => {
+  if (!process.env.AI_COACH_URL) {
+    throw new Error("AI coach endpoint is not configured.");
+  }
+
+  const response = await fetch(process.env.AI_COACH_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-runbot-ai-token": process.env.AI_COACH_TOKEN ?? "",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`AI coach failed: ${response.status} ${errorBody}`);
+  }
+
+  const data = (await response.json()) as { analysis?: string };
+  return data.analysis ?? "";
 };
 
 const handleWebhookJob = async (job: StravaWebhookJob) => {
@@ -131,6 +214,58 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
       const response = await postDiscordInteractionFollowUp(
         job.interactionToken,
         buildWeeklyStatsMessage(activities)
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(
+          `Discord follow-up failed: ${response.status} ${errorBody}`
+        );
+      }
+
+      return;
+    }
+
+    if (job.commandName === "analyse-run") {
+      const lookbackSince = Math.floor(Date.now() / 1000) - RECENT_LOOKBACK_DAYS * 24 * 60 * 60;
+      const [recentActivities, storedActivities] = await Promise.all([
+        fetchStravaActivitiesSince(user, lookbackSince),
+        getStoredStravaActivitiesByDiscordId(job.discordUserId),
+      ]);
+
+      const allRuns = dedupeAndSortRuns([...recentActivities, ...storedActivities]);
+      const recentRuns = allRuns.slice(0, 5);
+      const historicalRuns = allRuns.slice(5, 15);
+      const latestRun = recentRuns[0] ?? historicalRuns[0];
+      const weeklySummary = calculateWeeklyStats(recentActivities);
+
+      if (!latestRun) {
+        const response = await postDiscordInteractionFollowUp(
+          job.interactionToken,
+          "I could not find enough run history to analyse yet."
+        );
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          throw new Error(
+            `Discord follow-up failed: ${response.status} ${errorBody}`
+          );
+        }
+
+        return;
+      }
+
+      const analysis = await callAiCoach({
+        athleteName: "unknown",
+        latestRun,
+        recentRuns,
+        historicalRuns,
+        weeklySummary,
+      });
+
+      const response = await postDiscordInteractionFollowUp(
+        job.interactionToken,
+        analysis || "Could not generate a run analysis right now."
       );
 
       if (!response.ok) {

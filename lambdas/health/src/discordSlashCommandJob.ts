@@ -1,6 +1,6 @@
 export type DiscordSlashCommandJob = {
   kind: "discord-slash-command";
-  commandName: "stats" | "club-activities";
+  commandName: "stats" | "club-activities" | "analyse-run";
   interactionToken: string;
   discordUserId: string;
 };
@@ -16,7 +16,9 @@ export const isDiscordSlashCommandJob = (
 
   return (
     job.kind === "discord-slash-command" &&
-    (job.commandName === "stats" || job.commandName === "club-activities") &&
+    (job.commandName === "stats" ||
+      job.commandName === "club-activities" ||
+      job.commandName === "analyse-run") &&
     typeof job.interactionToken === "string" &&
     job.interactionToken.length > 0 &&
     typeof job.discordUserId === "string" &&

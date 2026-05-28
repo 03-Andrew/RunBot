@@ -6,6 +6,7 @@ const requestUtils_1 = require("../requestUtils");
 const http_1 = require("../http");
 const client_sqs_1 = require("@aws-sdk/client-sqs");
 const sqs = new client_sqs_1.SQSClient({});
+const getSubcommandName = (options) => options?.find((option) => option?.type === 1)?.name;
 const handleDiscordInteractions = async (event) => {
     const rawBody = (0, requestUtils_1.getRawBody)(event);
     if (!(0, discord_1.isValidDiscordRequest)(event, rawBody)) {
@@ -21,6 +22,7 @@ const handleDiscordInteractions = async (event) => {
         "`/strava` - Connect your Strava account",
         "`/stats` - Queue your weekly Strava stats",
         "`/club-activities` - Queue recent activities from the default Strava club",
+        "`/analyse run` - Queue an AI review of your latest run and training trend",
         "`/help` - Show this message",
     ].join("\n");
     if (body.type === 1) {
@@ -111,6 +113,60 @@ const handleDiscordInteractions = async (event) => {
                 type: 4,
                 data: {
                     content: "Could not queue your stats request right now.",
+                },
+            });
+        }
+    }
+    if (body.data?.name === "analyse" && getSubcommandName(body.data?.options) === "run") {
+        const discordUserId = body.member?.user?.id ?? body.user?.id;
+        if (!discordUserId) {
+            return (0, http_1.jsonResponse)(200, {
+                type: 4,
+                data: {
+                    content: "Could not identify your Discord user.",
+                },
+            });
+        }
+        const queueUrl = process.env.SQS_QUEUE_URL;
+        if (!queueUrl) {
+            console.error("SQS queue is not configured");
+            return (0, http_1.jsonResponse)(200, {
+                type: 4,
+                data: {
+                    content: "Queue is not configured yet.",
+                },
+            });
+        }
+        const message = {
+            kind: "discord-slash-command",
+            commandName: "analyse-run",
+            interactionToken: body.token,
+            discordUserId,
+        };
+        try {
+            const response = await sqs.send(new client_sqs_1.SendMessageCommand({
+                QueueUrl: queueUrl,
+                MessageBody: JSON.stringify(message),
+            }));
+            console.log("Queued Discord slash command job", {
+                commandName: "analyse-run",
+                discordUserId,
+                messageId: response.MessageId,
+            });
+            return (0, http_1.jsonResponse)(200, {
+                type: 5,
+            });
+        }
+        catch (error) {
+            console.error("Failed to queue Discord slash command job", {
+                commandName: "analyse-run",
+                discordUserId,
+                error,
+            });
+            return (0, http_1.jsonResponse)(200, {
+                type: 4,
+                data: {
+                    content: "Could not queue your analysis request right now.",
                 },
             });
         }

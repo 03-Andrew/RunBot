@@ -13,6 +13,10 @@ declare const process: {
   };
 };
 
+const getSubcommandName = (
+  options: Array<{ name?: string; type?: number }> | undefined
+) => options?.find((option) => option?.type === 1)?.name;
+
 export const handleDiscordInteractions = async (event: {
   headers?: Record<string, string | undefined>;
   body?: string | null;
@@ -37,6 +41,7 @@ export const handleDiscordInteractions = async (event: {
     "`/strava` - Connect your Strava account",
     "`/stats` - Queue your weekly Strava stats",
     "`/club-activities` - Queue recent activities from the default Strava club",
+    "`/analyse run` - Queue an AI review of your latest run and training trend",
     "`/help` - Show this message",
   ].join("\n");
 
@@ -143,6 +148,69 @@ export const handleDiscordInteractions = async (event: {
         type: 4,
         data: {
           content: "Could not queue your stats request right now.",
+        },
+      });
+    }
+  }
+
+  if (body.data?.name === "analyse" && getSubcommandName(body.data?.options) === "run") {
+    const discordUserId = body.member?.user?.id ?? body.user?.id;
+
+    if (!discordUserId) {
+      return jsonResponse(200, {
+        type: 4,
+        data: {
+          content: "Could not identify your Discord user.",
+        },
+      });
+    }
+
+    const queueUrl = process.env.SQS_QUEUE_URL;
+    if (!queueUrl) {
+      console.error("SQS queue is not configured");
+      return jsonResponse(200, {
+        type: 4,
+        data: {
+          content: "Queue is not configured yet.",
+        },
+      });
+    }
+
+    const message: DiscordSlashCommandJob = {
+      kind: "discord-slash-command",
+      commandName: "analyse-run",
+      interactionToken: body.token,
+      discordUserId,
+    };
+
+    try {
+      const response = await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: queueUrl,
+          MessageBody: JSON.stringify(message),
+        })
+      );
+
+      console.log("Queued Discord slash command job", {
+        commandName: "analyse-run",
+        discordUserId,
+        messageId: response.MessageId,
+      });
+
+      return jsonResponse(200, {
+        type: 5,
+      });
+    } catch (error) {
+      console.error("Failed to queue Discord slash command job", {
+        commandName: "analyse-run",
+        discordUserId,
+        error,
+      });
+
+      return jsonResponse(200, {
+        type: 4,
+        data: {
+          content: "Could not queue your analysis request right now.",
         },
       });
     }

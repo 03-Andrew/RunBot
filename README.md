@@ -17,9 +17,9 @@ Minimal AWS serverless backend for a Strava + Discord bot.
 Use `.env.example` as the placeholder reference:
 
 ```text
-AWS_ACCESS_KEY=YOUR_KEY
-AWS_SECRET_KEY=YOUR_SECRET
-AWS_REGION=ap-southeast-1
+AWS_ACCESS_KEY_ID=YOUR_KEY
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET
+AWS_REGION=YOUR_REGION
 TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
 TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
 TF_VAR_ai_coach_token=YOUR_RANDOM_INTERNAL_TOKEN

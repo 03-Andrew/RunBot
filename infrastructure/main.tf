@@ -72,6 +72,7 @@ resource "aws_lambda_function" "health" {
   handler          = "index.handler"
   filename         = data.archive_file.health_zip.output_path
   source_code_hash = data.archive_file.health_zip.output_base64sha256
+  timeout          = 15
   environment {
     variables = {
       DISCORD_PUBLIC_KEY   = var.discord_public_key
@@ -257,6 +258,31 @@ resource "aws_iam_role_policy" "dynamo" {
 
   policy = jsonencode({
 
+    Version = "2012-10-17"
+
+    Statement = [{
+
+      Effect = "Allow"
+
+      Action = [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem"
+      ]
+
+      Resource = [
+        aws_dynamodb_table.activitybot.arn,
+        "${aws_dynamodb_table.activitybot.arn}/index/*"
+      ]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "ai_dynamo" {
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
     Version = "2012-10-17"
 
     Statement = [{

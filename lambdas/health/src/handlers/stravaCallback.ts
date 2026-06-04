@@ -1,14 +1,97 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { db } from "../storage";
 import { htmlResponse, textResponse } from "../http";
-import { stravaConnectedPage } from "../stravaConnectedPage";
+import { postDiscordMessage, sendDiscordDM } from "../discord";
 
 declare const process: {
   env: {
     STRAVA_CLIENT_ID?: string;
     STRAVA_CLIENT_SECRET?: string;
+    DISCORD_CHANNEL_ID?: string;
+    DISCORD_BOT_TOKEN?: string;
+    SQS_QUEUE_URL?: string;
   };
 };
+
+const sqs = new SQSClient({});
+
+const stravaConnectedPage = `
+  <!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Strava Connected</title>
+      <style>
+        :root {
+          color-scheme: light;
+          font-family: Arial, Helvetica, sans-serif;
+        }
+
+        * {
+          box-sizing: border-box;
+        }
+
+        body {
+          min-height: 100vh;
+          margin: 0;
+          display: grid;
+          place-items: center;
+          background:
+            radial-gradient(circle at top, rgba(252, 76, 2, 0.18), transparent 34rem),
+            linear-gradient(135deg, #fff7f2 0%, #f7f7f4 48%, #ffffff 100%);
+          color: #242428;
+          padding: 24px;
+        }
+
+        .card {
+          width: min(100%, 420px);
+          text-align: center;
+          background: #ffffff;
+          border: 1px solid #f0e6df;
+          border-radius: 8px;
+          box-shadow: 0 24px 70px rgba(36, 36, 40, 0.14);
+          padding: 36px 30px 30px;
+        }
+
+        .mark {
+          width: 64px;
+          height: 64px;
+          margin: 0 auto 22px;
+          display: grid;
+          place-items: center;
+          border-radius: 50%;
+          background: #fc4c02;
+          color: #ffffff;
+          font-size: 34px;
+          line-height: 1;
+        }
+
+        h1 {
+          margin: 0 0 10px;
+          font-size: 28px;
+          line-height: 1.2;
+          letter-spacing: 0;
+        }
+
+        p {
+          margin: 0 0 26px;
+          color: #5f6267;
+          font-size: 16px;
+          line-height: 1.5;
+        }
+      </style>
+    </head>
+    <body>
+      <main class="card">
+        <div class="mark" aria-hidden="true">✓</div>
+        <h1>Strava Connected</h1>
+        <p>Your Strava account is connected to Discord. You may now exit this tab.</p>
+      </main>
+    </body>
+  </html>
+`;
 
 export const handleStravaCallback = async (event: {
   queryStringParameters?: Record<string, string | undefined> | null;
@@ -68,6 +151,46 @@ export const handleStravaCallback = async (event: {
     })
   );
 
+  // Send a success notification message to the main Discord channel
+  if (process.env.DISCORD_CHANNEL_ID) {
+    try {
+      await postDiscordMessage(
+        process.env.DISCORD_CHANNEL_ID,
+        `🏃‍♂️🤖 **Account Linked!** <@${discordId}> has successfully connected their Strava account.`
+      );
+    } catch (err: any) {
+      console.error("Failed to notify Discord channel:", err.message);
+    }
+  }
+
+  // Try to send a friendly DM directly to the user
+  try {
+    await sendDiscordDM(
+      discordId,
+      `👋 **Strava Connected!** Your Strava account is now connected to RunBot. You can now use slash commands like \`/stats\`, \`/club-activities\`, and \`/analyse run\` directly in Discord!`
+    );
+  } catch (err: any) {
+    console.error("Failed to send Discord DM:", err.message);
+  }
+
+  // Queue an asynchronous backfill of historical runs from Strava to DynamoDB
+  if (process.env.SQS_QUEUE_URL) {
+    try {
+      await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: process.env.SQS_QUEUE_URL,
+          MessageBody: JSON.stringify({
+            kind: "strava-backfill",
+            discordUserId: discordId,
+            lookbackDays: 730,
+          }),
+        })
+      );
+      console.log(`Queued Strava backfill job for user: ${discordId}`);
+    } catch (err: any) {
+      console.error("Failed to queue Strava backfill job:", err.message);
+    }
+  }
+
   return htmlResponse(200, stravaConnectedPage);
 };
-

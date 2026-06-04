@@ -1,3 +1,5 @@
+import { runNaturalLanguageAi } from "./agent";
+
 declare const Buffer: any;
 declare const process: {
   env: {
@@ -67,6 +69,11 @@ type AnalysisInput = {
   notes?: string;
 };
 
+type ChatInput = {
+  prompt?: string;
+  discordUserId?: string;
+};
+
 const formatDistanceKm = (meters?: number) => {
   if (meters == null || Number.isNaN(meters)) {
     return "n/a";
@@ -80,9 +87,9 @@ const formatPace = (movingTime?: number, distanceMeters?: number) => {
     return "n/a";
   }
 
-  const secondsPerKm = movingTime / (distanceMeters / 1000);
+  const secondsPerKm = Math.round(movingTime / (distanceMeters / 1000));
   const minutes = Math.floor(secondsPerKm / 60);
-  const seconds = Math.round(secondsPerKm % 60);
+  const seconds = secondsPerKm % 60;
 
   return `${minutes}:${String(seconds).padStart(2, "0")} /km`;
 };
@@ -178,13 +185,39 @@ export const handler = async (event: {
   }
 
   let input: AnalysisInput;
+  let rawInput: unknown;
 
   try {
-    input = JSON.parse(getRawBody(event) || "{}");
+    rawInput = JSON.parse(getRawBody(event) || "{}");
   } catch {
     return jsonResponse(400, { error: "Invalid JSON body" });
   }
 
+  if (
+    rawInput &&
+    typeof rawInput === "object" &&
+    typeof (rawInput as ChatInput).prompt === "string" &&
+    typeof (rawInput as ChatInput).discordUserId === "string"
+  ) {
+    const chatInput = rawInput as Required<ChatInput>;
+    try {
+      const analysis = await runNaturalLanguageAi(
+        chatInput.prompt,
+        chatInput.discordUserId
+      );
+
+      return jsonResponse(200, { analysis });
+    } catch (error) {
+      console.error("AI chat request failed", {
+        discordUserId: chatInput.discordUserId,
+        error,
+      });
+
+      return jsonResponse(500, { error: "Failed to generate chat response" });
+    }
+  }
+
+  input = rawInput as AnalysisInput;
   const prompt = buildPrompt(input);
 
   try {

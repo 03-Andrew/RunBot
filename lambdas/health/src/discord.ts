@@ -1,4 +1,4 @@
-import { getHeader, getRawBody } from "./requestUtils";
+import { getHeader, getRawBody } from "./http";
 
 declare const Buffer: any;
 declare const require: any;
@@ -7,6 +7,9 @@ declare const process: {
   env: {
     DISCORD_PUBLIC_KEY?: string;
     STRAVA_CLIENT_ID?: string;
+    DISCORD_APPLICATION_ID?: string;
+    DISCORD_BOT_TOKEN?: string;
+    DISCORD_CHANNEL_ID?: string;
   };
 };
 
@@ -78,4 +81,75 @@ export const buildStravaAuthorizeUrl = (discordUserId: string, clientId: string)
   url.searchParams.set("state", discordUserId);
 
   return url.toString();
+};
+
+export const postDiscordInteractionFollowUp = async (
+  interactionToken: string,
+  content: string
+) => {
+  if (!process.env.DISCORD_APPLICATION_ID) {
+    throw new Error("Discord application id is not configured.");
+  }
+
+  return fetch(
+    `https://discord.com/api/v10/webhooks/${process.env.DISCORD_APPLICATION_ID}/${interactionToken}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content }),
+    }
+  );
+};
+
+export const postDiscordMessage = async (channelId: string, content: string) => {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    throw new Error("Discord bot token is not configured.");
+  }
+
+  const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bot ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ content }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(`Failed to post Discord message: ${response.status} ${errorBody}`);
+  }
+  return response;
+};
+
+export const sendDiscordDM = async (userId: string, content: string) => {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    throw new Error("Discord bot token is not configured.");
+  }
+
+  try {
+    const channelResponse = await fetch("https://discord.com/api/v10/users/@me/channels", {
+      method: "POST",
+      headers: {
+        Authorization: `Bot ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ recipient_id: userId }),
+    });
+
+    if (!channelResponse.ok) {
+      const errorBody = await channelResponse.text();
+      console.error(`Failed to create DM channel: ${channelResponse.status} ${errorBody}`);
+      return channelResponse;
+    }
+
+    const channelData = (await channelResponse.json()) as { id: string };
+    return await postDiscordMessage(channelData.id, content);
+  } catch (error: any) {
+    console.error(`Error sending Discord DM: ${error.message}`);
+  }
 };

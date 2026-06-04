@@ -1,7 +1,5 @@
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { buildClubActivitiesMessageForClub } from "../stravaClubActivitiesMessage";
+import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { db } from "../storage";
-import { buildStravaActivityMessage } from "../stravaActivityMessage";
 import {
   fetchStravaActivity,
   fetchStravaActivitiesSince,
@@ -12,17 +10,22 @@ import {
   type StravaActivity,
   type StravaUserRecord,
 } from "../stravaApi";
-import { isStravaWebhookJob, type StravaWebhookJob } from "../stravaWebhookJob";
 import {
+  isStravaWebhookJob,
+  type StravaWebhookJob,
   isDiscordSlashCommandJob,
   type DiscordSlashCommandJob,
-} from "../discordSlashCommandJob";
+  isStravaBackfillJob,
+  type StravaBackfillJob,
+} from "../types";
 import {
+  buildClubActivitiesMessageForClub,
+  buildStravaActivityMessage,
   calculateWeeklyStats,
   buildWeeklyStatsMessage,
   getCurrentWeekStartUnixSeconds,
-} from "../stravaStats";
-import { postDiscordInteractionFollowUp } from "../discordFollowup";
+} from "../stravaFormatting";
+import { postDiscordInteractionFollowUp } from "../discord";
 
 declare const process: {
   env: {
@@ -128,6 +131,201 @@ const callAiCoach = async (payload: unknown) => {
   return data.analysis ?? "";
 };
 
+const recalculatePersonalRecords = async (discordUserId: string, allActivities: StravaActivity[]) => {
+  console.log(`Recalculating personal records for user ${discordUserId}`);
+  const prs: Record<string, StravaActivity | undefined> = {};
+  const runs = allActivities.filter(isRunningActivity);
+  
+  if (runs.length === 0) {
+    console.log(`No running activities found to compute PRs for user ${discordUserId}`);
+    return;
+  }
+
+  let longestRun = runs[0];
+  let biggestClimb = runs[0];
+  let best5k: StravaActivity | undefined;
+  let best5kPace = Infinity;
+  let best10k: StravaActivity | undefined;
+  let best10kPace = Infinity;
+  let bestHalf: StravaActivity | undefined;
+  let bestHalfPace = Infinity;
+
+  for (const run of runs) {
+    const distM = run.distance ?? 0;
+    const timeS = run.moving_time ?? 0;
+    const climbM = run.total_elevation_gain ?? 0;
+
+    if (distM > (longestRun.distance ?? 0)) {
+      longestRun = run;
+    }
+    if (climbM > (biggestClimb.total_elevation_gain ?? 0)) {
+      biggestClimb = run;
+    }
+
+    if (timeS > 0 && distM > 0) {
+      const paceSeconds = timeS / (distM / 1000);
+      if (distM >= 4900 && paceSeconds < best5kPace) {
+        best5kPace = paceSeconds;
+        best5k = run;
+      }
+      if (distM >= 9900 && paceSeconds < best10kPace) {
+        best10kPace = paceSeconds;
+        best10k = run;
+      }
+      if (distM >= 20900 && paceSeconds < bestHalfPace) {
+        bestHalfPace = paceSeconds;
+        bestHalf = run;
+      }
+    }
+  }
+
+  prs.longestRun = longestRun;
+  prs.biggestClimb = biggestClimb;
+  prs.best5k = best5k;
+  prs.best10k = best10k;
+  prs.bestHalfMarathon = bestHalf;
+
+  await db.send(
+    new PutCommand({
+      TableName: "ActivityBot",
+      Item: {
+        PK: `USER#${discordUserId}`,
+        SK: "PERSONAL_RECORDS",
+        DiscordID: discordUserId,
+        UpdatedAt: new Date().toISOString(),
+        personalRecords: prs,
+      },
+    })
+  );
+  console.log(`Successfully saved pre-computed PRs for user ${discordUserId}`);
+};
+
+const updatePersonalRecordsRecord = async (discordUserId: string, newActivity: StravaActivity) => {
+  console.log(`Checking PR updates for user ${discordUserId} with new run ${newActivity.id}`);
+  
+  const result = await db.send(
+    new GetCommand({
+      TableName: "ActivityBot",
+      Key: {
+        PK: `USER#${discordUserId}`,
+        SK: "PERSONAL_RECORDS",
+      },
+    })
+  );
+  
+  const prs = (result.Item?.personalRecords ?? {}) as Record<string, StravaActivity | undefined>;
+
+  let updated = false;
+
+  const currentLongest = prs.longestRun;
+  if (!currentLongest || (newActivity.distance ?? 0) > (currentLongest.distance ?? 0)) {
+    prs.longestRun = newActivity;
+    updated = true;
+  }
+
+  const currentClimb = prs.biggestClimb;
+  if (!currentClimb || (newActivity.total_elevation_gain ?? 0) > (currentClimb.total_elevation_gain ?? 0)) {
+    prs.biggestClimb = newActivity;
+    updated = true;
+  }
+
+  const distM = newActivity.distance ?? 0;
+  const timeS = newActivity.moving_time ?? 0;
+
+  if (timeS > 0 && distM > 0) {
+    const newPaceSeconds = timeS / (distM / 1000);
+
+    if (distM >= 4900) {
+      const current5k = prs.best5k;
+      const current5kPace = current5k && current5k.moving_time && current5k.distance
+        ? current5k.moving_time / (current5k.distance / 1000)
+        : Infinity;
+      if (newPaceSeconds < current5kPace) {
+        prs.best5k = newActivity;
+        updated = true;
+      }
+    }
+
+    if (distM >= 9900) {
+      const current10k = prs.best10k;
+      const current10kPace = current10k && current10k.moving_time && current10k.distance
+        ? current10k.moving_time / (current10k.distance / 1000)
+        : Infinity;
+      if (newPaceSeconds < current10kPace) {
+        prs.best10k = newActivity;
+        updated = true;
+      }
+    }
+
+    if (distM >= 20900) {
+      const currentHalf = prs.bestHalfMarathon;
+      const currentHalfPace = currentHalf && currentHalf.moving_time && currentHalf.distance
+        ? currentHalf.moving_time / (currentHalf.distance / 1000)
+        : Infinity;
+      if (newPaceSeconds < currentHalfPace) {
+        prs.bestHalfMarathon = newActivity;
+        updated = true;
+      }
+    }
+  }
+
+  if (updated) {
+    await db.send(
+      new PutCommand({
+        TableName: "ActivityBot",
+        Item: {
+          PK: `USER#${discordUserId}`,
+          SK: "PERSONAL_RECORDS",
+          DiscordID: discordUserId,
+          UpdatedAt: new Date().toISOString(),
+          personalRecords: prs,
+        },
+      })
+    );
+    console.log(`Updated pre-computed PRs for user ${discordUserId}`);
+  }
+};
+
+const handleBackfillJob = async (job: StravaBackfillJob) => {
+  const discordUserId = job.discordUserId;
+  console.log(`Starting Strava backfill for user ${discordUserId}`);
+
+  const user = await getLinkedStravaUserByDiscordId(discordUserId);
+  if (!user) {
+    console.error(`Backfill failed: No linked Strava user found for Discord ID ${discordUserId}`);
+    return;
+  }
+
+  const lookbackDays = job.lookbackDays ?? 90;
+  const afterUnixSeconds = Math.floor(Date.now() / 1000) - lookbackDays * 24 * 60 * 60;
+
+  try {
+    const activities = await fetchStravaActivitiesSince(user, afterUnixSeconds);
+    console.log(`Fetched ${activities.length} activities for backfill`);
+
+    for (const activity of activities) {
+      if (!activity.id) continue;
+
+      await db.send(
+        new PutCommand({
+          TableName: "ActivityBot",
+          Item: {
+            PK: `USER#${discordUserId}`,
+            SK: `ACTIVITY#${activity.id}`,
+            DiscordID: discordUserId,
+            UpdatedAt: new Date().toISOString(),
+            ...activity,
+          },
+        })
+      );
+    }
+    console.log(`Backfill successfully completed for user ${discordUserId}. Saved ${activities.length} activities.`);
+    await recalculatePersonalRecords(discordUserId, activities);
+  } catch (error: any) {
+    console.error(`Backfill failed for user ${discordUserId}:`, error.message);
+  }
+};
+
 const handleWebhookJob = async (job: StravaWebhookJob) => {
   if (job.objectType !== "activity" || !["create", "update"].includes(job.aspectType)) {
     console.log("Ignoring non-notifiable Strava webhook job", job);
@@ -171,6 +369,14 @@ const handleWebhookJob = async (job: StravaWebhookJob) => {
     })
   );
 
+  if (isRunningActivity(activity)) {
+    try {
+      await updatePersonalRecordsRecord(discordUserId, activity);
+    } catch (err: any) {
+      console.error("Failed to update personal records:", err.message);
+    }
+  }
+
   const discordResponse = await postDiscordMessage(
     buildStravaActivityMessage(activity, discordUserId)
   );
@@ -191,7 +397,7 @@ const handleWebhookJob = async (job: StravaWebhookJob) => {
 const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
   const user = await getLinkedStravaUserByDiscordId(job.discordUserId);
 
-  if (!user) {
+  if (!user && job.commandName !== "ai-chat") {
     const response = await postDiscordInteractionFollowUp(
       job.interactionToken,
       "No Strava account is linked yet. Run `/strava` first."
@@ -207,10 +413,33 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
     return;
   }
 
+  const linkedUser = user as NonNullable<typeof user>;
+
   try {
+    if (job.commandName === "ai-chat") {
+      const analysis = await callAiCoach({
+        prompt: job.prompt ?? "",
+        discordUserId: job.discordUserId,
+      });
+
+      const response = await postDiscordInteractionFollowUp(
+        job.interactionToken,
+        analysis || "Could not generate a response right now."
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(
+          `Discord follow-up failed: ${response.status} ${errorBody}`
+        );
+      }
+
+      return;
+    }
+
     if (job.commandName === "stats") {
       const afterUnixSeconds = getCurrentWeekStartUnixSeconds();
-      const activities = await fetchStravaActivitiesSince(user, afterUnixSeconds);
+      const activities = await fetchStravaActivitiesSince(linkedUser, afterUnixSeconds);
       const response = await postDiscordInteractionFollowUp(
         job.interactionToken,
         buildWeeklyStatsMessage(activities)
@@ -229,7 +458,7 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
     if (job.commandName === "analyse-run") {
       const lookbackSince = Math.floor(Date.now() / 1000) - RECENT_LOOKBACK_DAYS * 24 * 60 * 60;
       const [recentActivities, storedActivities] = await Promise.all([
-        fetchStravaActivitiesSince(user, lookbackSince),
+        fetchStravaActivitiesSince(linkedUser, lookbackSince),
         getStoredStravaActivitiesByDiscordId(job.discordUserId),
       ]);
 
@@ -278,8 +507,8 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
       return;
     }
 
-    const club = await getClubById(user, DEFAULT_CLUB_ID);
-    const activities = await getClubActivitiesById(user, DEFAULT_CLUB_ID, 1, 30);
+    const club = await getClubById(linkedUser, DEFAULT_CLUB_ID);
+    const activities = await getClubActivitiesById(linkedUser, DEFAULT_CLUB_ID, 1, 30);
     const response = await postDiscordInteractionFollowUp(
       job.interactionToken,
       buildClubActivitiesMessageForClub(
@@ -332,6 +561,11 @@ export const handleProcessStravaWebhook = async (event: {
 
     if (isStravaWebhookJob(parsed)) {
       await handleWebhookJob(parsed);
+      continue;
+    }
+
+    if (isStravaBackfillJob(parsed)) {
+      await handleBackfillJob(parsed);
       continue;
     }
 

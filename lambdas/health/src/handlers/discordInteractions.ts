@@ -1,8 +1,7 @@
 import { buildStravaAuthorizeUrl, isValidDiscordRequest } from "../discord";
-import { getRawBody } from "../requestUtils";
-import { jsonResponse } from "../http";
+import { getRawBody, jsonResponse } from "../http";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
-import type { DiscordSlashCommandJob } from "../discordSlashCommandJob";
+import type { DiscordSlashCommandJob } from "../types";
 
 const sqs = new SQSClient({});
 

@@ -1,7 +1,5 @@
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { buildClubActivitiesMessageForClub } from "../stravaClubActivitiesMessage";
 import { db } from "../storage";
-import { buildStravaActivityMessage } from "../stravaActivityMessage";
 import {
   fetchStravaActivity,
   fetchStravaActivitiesSince,
@@ -12,17 +10,20 @@ import {
   type StravaActivity,
   type StravaUserRecord,
 } from "../stravaApi";
-import { isStravaWebhookJob, type StravaWebhookJob } from "../stravaWebhookJob";
 import {
+  isStravaWebhookJob,
+  type StravaWebhookJob,
   isDiscordSlashCommandJob,
   type DiscordSlashCommandJob,
-} from "../discordSlashCommandJob";
+} from "../types";
 import {
+  buildClubActivitiesMessageForClub,
+  buildStravaActivityMessage,
   calculateWeeklyStats,
   buildWeeklyStatsMessage,
   getCurrentWeekStartUnixSeconds,
-} from "../stravaStats";
-import { postDiscordInteractionFollowUp } from "../discordFollowup";
+} from "../stravaFormatting";
+import { postDiscordInteractionFollowUp } from "../discord";
 
 declare const process: {
   env: {

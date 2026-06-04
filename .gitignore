@@ -8,3 +8,5 @@ terraform.tfstate.backup
 .env
 steps.txt
 .codexignore
+lambdas/*/dist/
+

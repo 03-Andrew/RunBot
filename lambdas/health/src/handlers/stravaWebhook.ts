@@ -1,7 +1,6 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
-import { jsonResponse, textResponse } from "../http";
-import { getRawBody } from "../requestUtils";
-import type { StravaWebhookJob } from "../stravaWebhookJob";
+import { getRawBody, jsonResponse, textResponse } from "../http";
+import type { StravaWebhookJob } from "../types";
 
 declare const process: {
   env: {

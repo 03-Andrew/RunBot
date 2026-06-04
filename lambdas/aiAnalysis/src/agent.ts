@@ -1,6 +1,6 @@
 import {
-  fetchStravaActivitiesSince,
   getLinkedStravaUserByDiscordId,
+  getStoredPersonalRecordsByDiscordId,
   getStoredStravaActivitiesByDiscordId,
   type StravaActivity,
   type StravaUserRecord,
@@ -44,7 +44,9 @@ type RunSummary = {
   movingTimeSeconds?: number;
   elapsedTimeSeconds?: number;
   pacePerKm?: string;
+  duration?: string;
   prCount?: number;
+  totalElevationGain?: number;
 };
 
 type WeeklyStatsSummary = {
@@ -116,11 +118,24 @@ const formatPace = (movingTimeSeconds?: number, distanceMeters?: number) => {
     return undefined;
   }
 
-  const secondsPerKm = movingTimeSeconds / (distanceMeters / 1000);
+  const secondsPerKm = Math.round(movingTimeSeconds / (distanceMeters / 1000));
   const minutes = Math.floor(secondsPerKm / 60);
-  const seconds = Math.round(secondsPerKm % 60);
+  const seconds = secondsPerKm % 60;
 
   return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+};
+
+const formatDuration = (seconds?: number) => {
+  if (seconds == null || Number.isNaN(seconds) || seconds <= 0) {
+    return undefined;
+  }
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.round(seconds % 60);
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${mins}:${String(secs).padStart(2, "0")}`;
 };
 
 const summarizeRun = (run: StravaActivity): RunSummary => ({
@@ -133,7 +148,9 @@ const summarizeRun = (run: StravaActivity): RunSummary => ({
   movingTimeSeconds: run.moving_time,
   elapsedTimeSeconds: run.elapsed_time,
   pacePerKm: formatPace(run.moving_time, run.distance),
+  duration: formatDuration(run.moving_time),
   prCount: run.pr_count,
+  totalElevationGain: run.total_elevation_gain,
 });
 
 const summarizeRuns = (runs: StravaActivity[]) => runs.map(summarizeRun);
@@ -143,13 +160,14 @@ const loadRunHistory = async (
   discordUserId: string,
   lookbackDays: number
 ) => {
-  const afterUnixSeconds = Math.floor(Date.now() / 1000) - lookbackDays * 24 * 60 * 60;
-  const [recentActivities, storedActivities] = await Promise.all([
-    fetchStravaActivitiesSince(user, afterUnixSeconds),
-    getStoredStravaActivitiesByDiscordId(discordUserId),
-  ]);
+  const storedActivities = await getStoredStravaActivitiesByDiscordId(discordUserId);
+  const runs = dedupeAndSortRuns(storedActivities);
 
-  return dedupeAndSortRuns([...recentActivities, ...storedActivities]);
+  const afterUnixSeconds = Math.floor(Date.now() / 1000) - lookbackDays * 24 * 60 * 60;
+  return runs.filter(run => {
+    const ts = getActivityTimestamp(run) / 1000;
+    return ts >= afterUnixSeconds;
+  });
 };
 
 const getLatestRun = async (context: AgentContext) => {
@@ -212,9 +230,14 @@ const getWeeklyStats = async (context: AgentContext): Promise<{ weeklyStats?: We
     };
   }
 
+  const storedActivities = await getStoredStravaActivitiesByDiscordId(context.discordUserId);
   const afterUnixSeconds = getCurrentWeekStartUnixSeconds();
-  const activities = await fetchStravaActivitiesSince(context.linkedStravaUser, afterUnixSeconds);
-  const stats = calculateWeeklyStats(activities);
+  const thisWeekActivities = storedActivities.filter(act => {
+    const ts = new Date(act.start_date || 0).getTime() / 1000;
+    return ts >= afterUnixSeconds;
+  });
+
+  const stats = calculateWeeklyStats(thisWeekActivities);
 
   return {
     weeklyStats: {
@@ -306,7 +329,117 @@ const compareToPastRuns = async (
   };
 };
 
+const getPersonalRecords = async (context: AgentContext) => {
+  if (!context.linkedStravaUser) {
+    return {
+      error: "No linked Strava account is available for this user.",
+    };
+  }
+
+  // 1. Try to load pre-computed Materialized View from DynamoDB
+  try {
+    const prRecord = await getStoredPersonalRecordsByDiscordId(context.discordUserId);
+    if (prRecord?.personalRecords) {
+      const prs = prRecord.personalRecords;
+      console.log(`Loaded pre-computed PRs from DynamoDB for user ${context.discordUserId}`);
+      return {
+        personalRecords: {
+          longestRun: prs.longestRun ? summarizeRun(prs.longestRun) : undefined,
+          biggestClimb: prs.biggestClimb ? summarizeRun(prs.biggestClimb) : undefined,
+          best5k: prs.best5k ? summarizeRun(prs.best5k) : undefined,
+          best10k: prs.best10k ? summarizeRun(prs.best10k) : undefined,
+          bestHalfMarathon: prs.bestHalfMarathon ? summarizeRun(prs.bestHalfMarathon) : undefined,
+        },
+      };
+    }
+  } catch (error: any) {
+    console.error(`Failed to read pre-computed PRs for user ${context.discordUserId}:`, error.message);
+  }
+
+  // 2. Fallback to on-the-fly calculations if the pre-computed record is missing (self-healing)
+  console.log(`Materialized PR record not found. Falling back to on-the-fly calculations for user ${context.discordUserId}`);
+  const activities = await getStoredStravaActivitiesByDiscordId(context.discordUserId);
+  const runs = dedupeAndSortRuns(activities);
+
+  if (runs.length === 0) {
+    return {
+      personalRecords: {},
+      note: "No running activity history found in the database.",
+    };
+  }
+
+  let longestRun = runs[0];
+  let best5k: StravaActivity | undefined;
+  let best5kPaceSeconds = Infinity;
+  let best10k: StravaActivity | undefined;
+  let best10kPaceSeconds = Infinity;
+  let bestHalf: StravaActivity | undefined;
+  let bestHalfPaceSeconds = Infinity;
+  let biggestClimb = runs[0];
+
+  for (const run of runs) {
+    const distM = run.distance ?? 0;
+    const timeS = run.moving_time ?? 0;
+    const climbM = run.total_elevation_gain ?? 0;
+
+    if (distM > (longestRun.distance ?? 0)) {
+      longestRun = run;
+    }
+    if (climbM > (biggestClimb.total_elevation_gain ?? 0)) {
+      biggestClimb = run;
+    }
+
+    if (timeS > 0 && distM > 0) {
+      const paceSecondsPerKm = timeS / (distM / 1000);
+
+      // Check 5k (>= 4900m to allow for minor GPS/track rounding)
+      if (distM >= 4900) {
+        if (paceSecondsPerKm < best5kPaceSeconds) {
+          best5kPaceSeconds = paceSecondsPerKm;
+          best5k = run;
+        }
+      }
+
+      // Check 10k (>= 9900m)
+      if (distM >= 9900) {
+        if (paceSecondsPerKm < best10kPaceSeconds) {
+          best10kPaceSeconds = paceSecondsPerKm;
+          best10k = run;
+        }
+      }
+
+      // Check Half Marathon (>= 20900m)
+      if (distM >= 20900) {
+        if (paceSecondsPerKm < bestHalfPaceSeconds) {
+          bestHalfPaceSeconds = paceSecondsPerKm;
+          bestHalf = run;
+        }
+      }
+    }
+  }
+
+  return {
+    personalRecords: {
+      longestRun: summarizeRun(longestRun),
+      biggestClimb: summarizeRun(biggestClimb),
+      best5k: best5k ? summarizeRun(best5k) : undefined,
+      best10k: best10k ? summarizeRun(best10k) : undefined,
+      bestHalfMarathon: bestHalf ? summarizeRun(bestHalf) : undefined,
+    },
+  };
+};
+
 const TOOL_DECLARATIONS = [
+  {
+    name: "get_personal_records",
+    description:
+      "Get the user's all-time running personal records (PRs) computed from database history, including longest run, biggest climb, and fastest 5k/10k/Half Marathon.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
   {
     name: "get_latest_run",
     description:
@@ -381,6 +514,10 @@ const getText = (content: GeminiContent) =>
 const executeTool = async (context: AgentContext, call: GeminiFunctionCall) => {
   const args = call.args ?? {};
 
+  if (call.name === "get_personal_records") {
+    return { result: await getPersonalRecords(context) };
+  }
+
   if (call.name === "get_latest_run") {
     return { result: await getLatestRun(context) };
   }
@@ -405,7 +542,7 @@ const buildSystemInstruction = (hasLinkedStrava: boolean) =>
     "You are RunBot, a concise conversational running coach inside Discord.",
     "Respond in clear markdown.",
     "Use tools when the user's question needs current, recent, or comparative Strava data.",
-    "If a linked Strava account is available, you may reference the user's recent runs and weekly trends.",
+    "If a linked Strava account is available, you may reference the user's recent runs, weekly trends, or all-time personal records.",
     hasLinkedStrava
       ? "A linked Strava account is available for this user."
       : "No linked Strava account is available. Do not claim to know the user's personal run data. If the user asks about their own runs, tell them to connect Strava with /strava first.",

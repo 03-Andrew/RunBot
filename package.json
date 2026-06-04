@@ -7,7 +7,10 @@
   },
   "scripts": {
     "build": "npm --prefix lambdas/health run build",
+    "start:local": "node scripts/serve-local.js",
+    "dev": "npm run build && node scripts/serve-local.js",
     "terraform:init": "terraform -chdir=infrastructure init",
-    "terraform:apply": "terraform -chdir=infrastructure apply"
+    "terraform:apply": "terraform -chdir=infrastructure apply",
+    "test:strava": "node scripts/test-strava.js"
   }
 }

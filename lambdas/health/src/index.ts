@@ -3,7 +3,10 @@ import { handleStravaCallback } from "./handlers/stravaCallback";
 import { handleStravaWebhook } from "./handlers/stravaWebhook";
 import { jsonResponse } from "./http";
 
-export const handler = async (event: any) => {
+export const handler = async (event: any, context: any) => {
+  if (context) {
+    context.callbackWaitsForEmptyEventLoop = false;
+  }
   const path = event.requestContext?.http?.path;
   const method = event.requestContext?.http?.method;
 

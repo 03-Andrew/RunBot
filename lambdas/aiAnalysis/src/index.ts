@@ -87,9 +87,9 @@ const formatPace = (movingTime?: number, distanceMeters?: number) => {
     return "n/a";
   }
 
-  const secondsPerKm = movingTime / (distanceMeters / 1000);
+  const secondsPerKm = Math.round(movingTime / (distanceMeters / 1000));
   const minutes = Math.floor(secondsPerKm / 60);
-  const seconds = Math.round(secondsPerKm % 60);
+  const seconds = secondsPerKm % 60;
 
   return `${minutes}:${String(seconds).padStart(2, "0")} /km`;
 };

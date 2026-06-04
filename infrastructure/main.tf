@@ -72,6 +72,7 @@ resource "aws_lambda_function" "health" {
   handler          = "index.handler"
   filename         = data.archive_file.health_zip.output_path
   source_code_hash = data.archive_file.health_zip.output_base64sha256
+  timeout          = 15
   environment {
     variables = {
       DISCORD_PUBLIC_KEY   = var.discord_public_key

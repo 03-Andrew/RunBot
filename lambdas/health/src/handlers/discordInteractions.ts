@@ -1,6 +1,8 @@
 import { buildStravaAuthorizeUrl, isValidDiscordRequest } from "../discord";
 import { getRawBody, jsonResponse } from "../http";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { db } from "../storage";
 import type { DiscordSlashCommandJob } from "../types";
 
 const sqs = new SQSClient({});
@@ -22,6 +24,64 @@ const getStringOptionValue = (
 ) => {
   const option = options?.find((entry) => entry?.name === name && entry?.type === 3);
   return typeof option?.value === "string" ? option.value : undefined;
+};
+
+const LIMIT_MAX_TOKENS = 5;
+const LIMIT_REFILL_RATE_SECONDS = 30; // 1 token refilled every 30 seconds
+
+const checkRateLimit = async (discordUserId: string): Promise<{ allowed: boolean; waitSeconds: number }> => {
+  try {
+    const result = await db.send(
+      new GetCommand({
+        TableName: "ActivityBot",
+        Key: {
+          PK: `USER#${discordUserId}`,
+          SK: "RATE_LIMIT",
+        },
+      })
+    );
+
+    const now = Math.floor(Date.now() / 1000);
+    let tokens = LIMIT_MAX_TOKENS;
+    let lastRefill = now;
+
+    if (result.Item) {
+      tokens = result.Item.tokens ?? LIMIT_MAX_TOKENS;
+      lastRefill = result.Item.lastRefill ?? now;
+
+      const elapsed = now - lastRefill;
+      if (elapsed > 0) {
+        const refilledTokens = Math.floor(elapsed / LIMIT_REFILL_RATE_SECONDS);
+        if (refilledTokens > 0) {
+          tokens = Math.min(LIMIT_MAX_TOKENS, tokens + refilledTokens);
+          lastRefill = lastRefill + refilledTokens * LIMIT_REFILL_RATE_SECONDS;
+        }
+      }
+    }
+
+    if (tokens >= 1) {
+      tokens -= 1;
+      await db.send(
+        new PutCommand({
+          TableName: "ActivityBot",
+          Item: {
+            PK: `USER#${discordUserId}`,
+            SK: "RATE_LIMIT",
+            tokens,
+            lastRefill,
+            UpdatedAt: new Date().toISOString(),
+          },
+        })
+      );
+      return { allowed: true, waitSeconds: 0 };
+    }
+
+    const waitSeconds = LIMIT_REFILL_RATE_SECONDS - (now - lastRefill);
+    return { allowed: false, waitSeconds };
+  } catch (error: any) {
+    console.error("Rate limit check failed, defaulting to allowed:", error.message);
+    return { allowed: true, waitSeconds: 0 };
+  }
 };
 
 export const handleDiscordInteractions = async (event: {
@@ -55,6 +115,26 @@ export const handleDiscordInteractions = async (event: {
 
   if (body.type === 1) {
     return jsonResponse(200, { type: 1 });
+  }
+
+  // Global Rate Limiting for intensive slash commands
+  const discordUserId = body.member?.user?.id ?? body.user?.id;
+  const commandName = body.data?.name;
+  if (discordUserId && ["stats", "club-activities", "analyse", "ai"].includes(commandName)) {
+    try {
+      const { allowed, waitSeconds } = await checkRateLimit(discordUserId);
+      if (!allowed) {
+        return jsonResponse(200, {
+          type: 4,
+          data: {
+            content: `⚠️ **Rate Limited!** Please wait **${waitSeconds} seconds** before running this command again.`,
+            flags: 64, // Ephemeral: only visible to the user who ran the command
+          },
+        });
+      }
+    } catch (err: any) {
+      console.error("Rate limiting check failed:", err.message);
+    }
   }
 
   if (body.data?.name === "strava") {

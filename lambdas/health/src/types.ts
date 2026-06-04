@@ -66,3 +66,24 @@ export const isStravaWebhookJob = (value: unknown): value is StravaWebhookJob =>
     typeof job.aspectType === "string"
   );
 };
+
+export type StravaBackfillJob = {
+  kind: "strava-backfill";
+  discordUserId: string;
+  lookbackDays?: number;
+};
+
+export const isStravaBackfillJob = (value: unknown): value is StravaBackfillJob => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const job = value as Partial<StravaBackfillJob>;
+
+  return (
+    job.kind === "strava-backfill" &&
+    typeof job.discordUserId === "string" &&
+    job.discordUserId.length > 0
+  );
+};
+

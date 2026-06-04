@@ -1,13 +1,20 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { db } from "../storage";
 import { htmlResponse, textResponse } from "../http";
+import { postDiscordMessage, sendDiscordDM } from "../discord";
 
 declare const process: {
   env: {
     STRAVA_CLIENT_ID?: string;
     STRAVA_CLIENT_SECRET?: string;
+    DISCORD_CHANNEL_ID?: string;
+    DISCORD_BOT_TOKEN?: string;
+    SQS_QUEUE_URL?: string;
   };
 };
+
+const sqs = new SQSClient({});
 
 const stravaConnectedPage = `
   <!doctype html>
@@ -143,6 +150,47 @@ export const handleStravaCallback = async (event: {
       },
     })
   );
+
+  // Send a success notification message to the main Discord channel
+  if (process.env.DISCORD_CHANNEL_ID) {
+    try {
+      await postDiscordMessage(
+        process.env.DISCORD_CHANNEL_ID,
+        `🏃‍♂️🤖 **Account Linked!** <@${discordId}> has successfully connected their Strava account.`
+      );
+    } catch (err: any) {
+      console.error("Failed to notify Discord channel:", err.message);
+    }
+  }
+
+  // Try to send a friendly DM directly to the user
+  try {
+    await sendDiscordDM(
+      discordId,
+      `👋 **Strava Connected!** Your Strava account is now connected to RunBot. You can now use slash commands like \`/stats\`, \`/club-activities\`, and \`/analyse run\` directly in Discord!`
+    );
+  } catch (err: any) {
+    console.error("Failed to send Discord DM:", err.message);
+  }
+
+  // Queue an asynchronous backfill of historical runs from Strava to DynamoDB
+  if (process.env.SQS_QUEUE_URL) {
+    try {
+      await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: process.env.SQS_QUEUE_URL,
+          MessageBody: JSON.stringify({
+            kind: "strava-backfill",
+            discordUserId: discordId,
+            lookbackDays: 730,
+          }),
+        })
+      );
+      console.log(`Queued Strava backfill job for user: ${discordId}`);
+    } catch (err: any) {
+      console.error("Failed to queue Strava backfill job:", err.message);
+    }
+  }
 
   return htmlResponse(200, stravaConnectedPage);
 };

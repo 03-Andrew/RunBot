@@ -25,6 +25,7 @@ export type StravaActivity = {
   moving_time?: number;
   elapsed_time?: number;
   pr_count?: number;
+  total_elevation_gain?: number;
 };
 
 declare const process: {
@@ -152,6 +153,20 @@ export const getStoredStravaActivitiesByDiscordId = async (
   } while (lastEvaluatedKey);
 
   return items;
+};
+
+export const getStoredPersonalRecordsByDiscordId = async (discordUserId: string) => {
+  const result = await db.send(
+    new GetCommand({
+      TableName: "ActivityBot",
+      Key: {
+        PK: `USER#${discordUserId}`,
+        SK: "PERSONAL_RECORDS",
+      },
+    })
+  );
+
+  return result.Item as { personalRecords?: Record<string, StravaActivity> } | undefined;
 };
 
 export const fetchStravaActivitiesSince = async (

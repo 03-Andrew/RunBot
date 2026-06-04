@@ -9,4 +9,4 @@ terraform.tfstate.backup
 steps.txt
 .codexignore
 lambdas/*/dist/
-
+.geminiignore

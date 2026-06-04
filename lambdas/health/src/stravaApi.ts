@@ -25,6 +25,7 @@ export type StravaActivity = {
   moving_time?: number;
   elapsed_time?: number;
   pr_count?: number;
+  total_elevation_gain?: number;
 };
 
 export type ClubAthlete = {

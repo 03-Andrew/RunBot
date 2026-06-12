@@ -1,14 +1,14 @@
 # RunBot Project Map
 
-This repo is a small AWS backend for a Strava + Discord bot.
+RunBot is a serverless AWS backend that connects Strava and Discord. It automatically posts activity notifications, tracks personal records, and provides an integrated Gemini-powered AI running coach — all triggered via Discord slash commands.
 
 ## What lives where
 
 ### Root
 
 - `package.json`: convenience scripts for building and Terraform.
-- `README.md`: high-level deploy and test notes.
-- `.github/workflows/cicd.yml`: GitHub Actions workflow that builds, registers commands, and deploys Terraform.
+- `README.md`: full feature documentation, environment setup, and deploy guide.
+- `.github/workflows/cicd.yml`: GitHub Actions workflow that builds, registers Discord commands, and deploys Terraform.
 - `PROJECT_MAP.md`: this file.
 
 ### `infrastructure/`
@@ -20,116 +20,148 @@ Terraform for the AWS deployment.
 - `bootstrap/`: one-time Terraform stack that creates the backend bucket.
 - `variables.tf`: input variables such as Discord and Strava secrets.
 - `main.tf`: the main infrastructure definition. It creates:
-  - the HTTP Lambda function (`health`)
-  - the AI Lambda function (`ai_worker`)
-  - the SQS Worker Lambda function (`strava_worker`)
+  - the HTTP Lambda function (`api`) — handles all public HTTP endpoints
+  - the SQS Worker Lambda function (`strava-worker`) — processes background jobs with integrated Gemini AI
   - API Gateway routes and integrations
   - the DynamoDB table (`ActivityBot`) with a GSI (`GSI1`) for Strava ID lookups
   - SQS queue and DLQ for retry/deferral flows
   - IAM permissions and roles
 - `outputs.tf`: exported values such as the API URL.
 
-### `lambdas/health/`
+### `lambdas/api/`
 
-This is the application code for both the HTTP Lambda and the SQS Worker Lambda.
+Application code for both the HTTP (`api`) and SQS Worker (`strava-worker`) Lambda functions. They are deployed from the same compiled bundle (`dist/`) but use different handler entry points.
 
 - `package.json`: Lambda-local dependencies and build script.
-- `tsconfig.json`: TypeScript compiler settings (uses Node 16 module resolution).
+- `tsconfig.json`: TypeScript compiler settings.
 - `scripts/copy-prod-deps.js`: copies production dependencies into `dist/node_modules` after build.
-- `src/`: TypeScript source code.
-- `dist/`: compiled output that Terraform packages and deploys. This is generated, not edited by hand.
+- `src/`: TypeScript source code (see breakdown below).
+- `dist/`: compiled output that Terraform packages and deploys. Do not edit by hand.
 
-### `lambdas/aiAnalysis/`
+---
 
-AI-based run analysis Lambda (`ai_worker`) using Gemini.
-
-- `package.json`: Lambda-local build script.
-- `tsconfig.json`: TypeScript compiler settings (uses Node 16 module resolution).
-- `src/`: TypeScript source code.
-  - `src/index.ts`: Entry point handler. Routes `/ai-coach` POST requests and handles key auth.
-  - `src/agent.ts`: The main running coach agent. Implements Gemini-based natural language chat with tool-calling (weekly stats, latest run, comparison) via DynamoDB.
-  - `src/stravaApi.ts`: Helper functions to fetch linked Strava user, stored activities, and personal records.
-  - `src/stravaStats.ts`: Calculation helpers for weekly summaries.
-  - `src/storage.ts`: DynamoDB client initialization.
-- `dist/`: compiled output packaged by Terraform.
-
-## Lambda source files (`lambdas/health/src`)
+## Lambda source files (`lambdas/api/src`)
 
 ### Entry points
 
-- `src/index.ts`: The route dispatcher for the HTTP Lambda. Handles `/health` directly and routes callbacks/webhooks/interactions.
-- `src/worker.ts`: The entry point for the SQS Worker Lambda. Invokes `handleProcessStravaWebhook`.
+- `src/index.ts`: Route dispatcher for the HTTP (`api`) Lambda. Handles `GET /health`, and routes `/discord-interactions`, `/strava/callback`, and `/strava/webhook` to the correct handler.
+- `src/worker.ts`: Entry point for the SQS Worker Lambda. Receives SQS Records and calls `handleProcessStravaWebhook`.
 
-### Route and Queue handlers
+### Route handlers (HTTP Lambda)
 
-- `src/handlers/discordInteractions.ts`: Validates request signatures, enforces global rate limits, and routes slash commands (queues `/stats`, `/club-activities`, `/analyse run`, `/ai` to SQS).
-- `src/handlers/stravaWebhook.ts`: Verifies Strava's webhook challenge and pushes new webhook activities into SQS.
-- `src/handlers/stravaCallback.ts`: Exchanges authorization codes for Strava tokens and renders an inline HTML confirmation page.
-- `src/handlers/processStravaWebhook.ts`: SQS job worker. Processes webhook events (creates activities, stores them in DynamoDB, checks/updates personal records, posts to Discord) and deferred commands (`stats`, `club-activities`, `analyse-run`, `ai-chat`).
+- `src/handlers/discordInteractions.ts`: Validates Discord Ed25519 request signatures, enforces the global DynamoDB token-bucket rate limiter, and handles all slash commands:
+  - `/strava` — returns a Strava OAuth authorization URL immediately.
+  - `/stats`, `/club-activities`, `/analyse run`, `/ai` — enqueues SQS jobs and returns a Type 5 deferred response.
+  - `/help` — returns the list of available commands immediately.
+- `src/handlers/stravaWebhook.ts`: Handles `GET /strava/webhook` (webhook challenge verification) and `POST /strava/webhook` (enqueues a new `strava-webhook` SQS job).
+- `src/handlers/stravaCallback.ts`: Handles `GET /strava/callback`. Exchanges the Strava authorization code for tokens, stores the user profile in DynamoDB, sends a welcome DM and channel notification to Discord, queues a 730-day historical activity backfill job, and renders a branded HTML confirmation page.
+
+### SQS Worker (strava-worker Lambda)
+
+- `src/handlers/processStravaWebhook.ts`: Processes all SQS job types:
+  - **`strava-webhook`** — Fetches the Strava activity details, upserts the activity record in DynamoDB, incrementally updates personal records, and posts a Discord channel notification.
+  - **`strava-backfill`** — Fetches up to 730 days of historical activities from Strava, saves them all to DynamoDB, and runs a full PR recalculation from scratch.
+  - **`discord-slash-command / stats`** — Fetches the current week's Strava activities and posts a weekly stats summary to Discord via follow-up webhook.
+  - **`discord-slash-command / club-activities`** — Fetches the latest 30 activities from the configured Strava Club and posts the formatted list via follow-up webhook.
+  - **`discord-slash-command / analyse-run`** — Builds a run context payload (latest run, 5 recent runs, 10 historical runs, weekly summary) and calls `runRunAnalysis` from `agent.ts` to generate a Gemini coaching report.
+  - **`discord-slash-command / ai-chat`** — Calls `runNaturalLanguageAi` from `agent.ts` with the user's prompt for free-form AI coaching.
+
+### AI Agent
+
+- `src/agent.ts`: Contains both AI execution engines:
+  - `runNaturalLanguageAi(prompt, discordUserId)` — Conversational Gemini agent with a multi-turn tool-calling loop (up to 4 iterations). Tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`.
+  - `runRunAnalysis(input)` — Single-pass Gemini call that builds a structured coaching report from a run context payload using a detailed prompt template.
 
 ### Shared helpers
 
 - `src/http.ts`: Standardized JSON, text, and HTML HTTP response creators.
-- `src/storage.ts`: DynamoDB client initialization.
-- `src/discord.ts`: Cryptographic request signature validator and auth URL builder.
-- `src/stravaApi.ts`: Fetches activities from Strava, handles OAuth refresh, queries DynamoDB.
-- `src/stravaFormatting.ts`: Centralizes stats compilation, message formatting (activity messages and club feeds), and Discord content formatting.
-- `src/types.ts`: Central TypeScript definitions for SQS jobs, API events, and type-guards (e.g., `DiscordSlashCommandJob`, `StravaWebhookJob`, `StravaBackfillJob`).
+- `src/storage.ts`: DynamoDB client initialization (`DynamoDBDocumentClient`).
+- `src/discord.ts`: Ed25519 request signature validator, Strava OAuth URL builder, `postDiscordMessage`, `postDiscordInteractionFollowUp`, and `sendDiscordDM`.
+- `src/stravaApi.ts`: Strava API client. Handles OAuth token refresh, fetches individual activities, paginated activity lists, club activities, and queries the DynamoDB user and activity stores.
+- `src/stravaFormatting.ts`: Stats compilation (`calculateWeeklyStats`, `getCurrentWeekStartUnixSeconds`), Discord message formatters for activities (`buildStravaActivityMessage`), weekly stats (`buildWeeklyStatsMessage`), and club feeds (`buildClubActivitiesMessageForClub`).
+- `src/types.ts`: Central TypeScript type definitions and runtime type-guards for `DiscordSlashCommandJob`, `StravaWebhookJob`, `StravaBackfillJob`, and `ApiGatewayEvent`.
 
-## Current data flow
+---
 
-1. Discord sends an interaction to `/discord-interactions`.
-2. The HTTP Lambda verifies the signature and checks global rate limits for intensive commands.
-3. `/strava` responds with a link. `/stats`, `/club-activities`, `/analyse run`, and `/ai` enqueue SQS jobs and return deferred (type 5) responses.
-4. Strava webhook events arrive at `/strava/webhook`, validate immediately, and are enqueued as jobs in SQS.
-5. The SQS Queue triggers the Worker Lambda.
-6. The Worker Lambda executes:
-   - For webhooks: Fetches Strava details, updates DynamoDB activities, evaluates/saves running Personal Records (PRs), and pushes notifications to Discord.
-   - For `/stats` and `/club-activities`: Gathers activity logs, formats messages, and posts them via follow-up webhooks.
-   - For `/analyse run`: Retrieves the user's run history, requests an analysis from the AI endpoint (`/ai-coach`), and responds with the coaching report.
-   - For `/ai` chat: Queries the AI endpoint (`/ai-coach`) with a natural language prompt, allowing Gemini to invoke tool-calling for user stats before returning the answer.
+## Data flow
+
+```
+Discord User
+    │
+    ▼
+POST /discord-interactions
+    │
+    ├── Verify Ed25519 signature
+    ├── Check DynamoDB rate limit
+    │
+    ├── /strava → return OAuth URL (instant)
+    ├── /help   → return command list (instant)
+    │
+    └── /stats, /club-activities, /analyse run, /ai
+            │
+            ▼
+        SQS Queue (strava-webhook-queue)
+            │
+            ▼
+        strava-worker Lambda
+            │
+            ├── stats          → fetch Strava activities → post weekly stats to Discord
+            ├── club-activities→ fetch club activities → post feed to Discord
+            ├── analyse-run    → build run context → Gemini analysis → post report to Discord
+            └── ai-chat        → Gemini tool-calling agent → post response to Discord
+
+POST /strava/webhook (Strava event)
+    │
+    ▼
+SQS Queue
+    │
+    ▼
+strava-worker Lambda
+    │
+    ├── Fetch activity from Strava API
+    ├── Upsert activity in DynamoDB
+    ├── Incrementally update Personal Records
+    └── Post Discord notification
+
+GET /strava/callback (OAuth return)
+    │
+    ├── Exchange code for tokens
+    ├── Store user profile in DynamoDB
+    ├── Post Discord channel + DM notification
+    ├── Queue 730-day historical backfill
+    └── Return HTML confirmation page
+```
+
+---
 
 ## DynamoDB layout
 
-One table is used: `ActivityBot`. It has a Global Secondary Index (`GSI1`) for querying users by their Strava ID.
+One table: `ActivityBot`. One GSI: `GSI1` for querying users by Strava athlete ID.
 
-Common item shapes:
+| Item type | PK | SK | Key attributes |
+| :--- | :--- | :--- | :--- |
+| User profile | `USER#{discordId}` | `PROFILE` | `AccessToken`, `RefreshToken`, `ExpiresAt`, `GSI1PK`, `GSI1SK` |
+| Activity record | `USER#{discordId}` | `ACTIVITY#{activityId}` | All Strava activity fields, `DiscordID`, `UpdatedAt` |
+| Personal Records | `USER#{discordId}` | `PERSONAL_RECORDS` | `personalRecords` map: `longestRun`, `biggestClimb`, `best5k`, `best10k`, `bestHalfMarathon` |
+| Rate Limit | `USER#{discordId}` | `RATE_LIMIT` | `tokens`, `lastRefill`, `UpdatedAt` |
 
-- **User profile**:
-  - `PK = USER#{discordId}`
-  - `SK = PROFILE`
-  - `GSI1PK = STRAVA#{stravaAthleteId}`
-  - `GSI1SK = PROFILE`
-- **Activity record**:
-  - `PK = USER#{discordId}`
-  - `SK = ACTIVITY#{activityId}`
-- **Personal Records (PRs)**:
-  - `PK = USER#{discordId}`
-  - `SK = PERSONAL_RECORDS`
-  - Attributes: `personalRecords` (map of longest run, climb, 5k, 10k, half marathon).
-- **Rate Limit**:
-  - `PK = USER#{discordId}`
-  - `SK = RATE_LIMIT`
-  - Attributes: `tokens` (number of available tokens), `lastRefill` (epoch timestamp).
-
-The table is schema-less, so the code controls what fields each item stores.
+---
 
 ## Important scripts
 
-- `npm run build` at the repo root: builds all Lambdas.
-- `npm --prefix lambdas/health run build`: compiles health/worker code and copies prod dependencies.
-- `npm --prefix lambdas/aiAnalysis run build`: compiles AI agent code.
-- `node scripts/registerCommand.js`: registers Discord slash commands.
-- `node scripts/serve-local.js`: runs local mock API Gateway for handler testing.
-- `node scripts/test-strava.js`: tests Strava API authorization and retrieval.
-- `terraform -chdir=infrastructure apply`: deploys AWS infrastructure.
-- `terraform -chdir=infrastructure/bootstrap apply`: creates the remote Terraform backend.
+- `npm run build` — builds the Lambda from the repo root.
+- `npm --prefix lambdas/api run build` — compiles TypeScript and copies prod dependencies into `dist/`.
+- `node scripts/registerCommand.js` — registers Discord slash commands via the Discord API.
+- `node scripts/serve-local.js` — runs a local mock API Gateway server on `http://localhost:3000`.
+- `node scripts/test-strava.js` — interactive CLI for testing Strava API token exchanges and activity lookups.
+- `terraform -chdir=infrastructure apply` — deploys AWS infrastructure.
+- `terraform -chdir=infrastructure/bootstrap apply` — creates the remote Terraform state backend.
 
 ## Generated files
 
 Do not edit these by hand:
 
-- `lambdas/health/dist/`
-- `lambdas/health/function.zip`
+- `lambdas/api/dist/`
+- `lambdas/api/function.zip`
 
 They are produced by the build/package flow.

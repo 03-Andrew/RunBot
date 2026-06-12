@@ -6,9 +6,8 @@ This repo uses Terraform to provision the AWS infrastructure for the RunBot back
 
 Terraform starts by packaging the built Lambda bundle:
 
-- `archive_file.health_zip` zips `../lambdas/health/dist`
-- `archive_file.ai_zip` zips `../lambdas/aiAnalysis/dist`
-- The resulting zip is deployed to Lambda
+- `archive_file.api_zip` zips `../lambdas/api/dist`
+- The resulting zip is deployed to the Lambdas
 
 That means you must build the TypeScript code before running `terraform apply`.
 
@@ -35,7 +34,7 @@ Recommended first-time flow:
 
 ## 3. Shared IAM Role
 
-Terraform creates one IAM role shared across all three Lambda functions (`health`, `strava_worker`, and `ai_worker`):
+Terraform creates one IAM role shared across both Lambda functions (`api` and `strava_worker`):
 
 - `aws_iam_role.lambda_role`
 - `aws_iam_role_policy_attachment.basic`
@@ -57,12 +56,11 @@ Queue settings:
 
 This is what makes retry handling work for transient failures and cold starts.
 
-## 5. HTTP & AI Lambdas
+## 5. HTTP Lambda (API)
 
-Terraform provisions the primary entrypoint Lambdas:
+Terraform provisions the primary entrypoint Lambda:
 
-- `aws_lambda_function.health` (HTTP Lambda): Handles all standard HTTP endpoints including validation, callback, and initial slash-command reception.
-- `aws_lambda_function.ai_worker` (AI Lambda): Dedicated Lambda that runs the Gemini runner-coach agent.
+- `aws_lambda_function.api` (HTTP Lambda): Handles all standard HTTP endpoints including validation, callback, and initial slash-command reception.
 
 The HTTP Lambda handles:
 
@@ -71,10 +69,6 @@ The HTTP Lambda handles:
 - `GET /strava/callback`
 - `GET /strava/webhook`
 - `POST /strava/webhook`
-
-The AI Lambda handles:
-
-- `POST /ai-coach`
 
 For `/strava/webhook`, the HTTP Lambda only validates the request and immediately sends a job to SQS.
 For `/discord-interactions`, heavy commands (`/stats`, `/club-activities`, `/analyse run`, `/ai`) are checked against global rate limits and then enqueued as SQS jobs.
@@ -98,30 +92,24 @@ It also processes deferred Discord slash commands:
 - looks up the linked Strava user
 - fetches weekly stats or club activities
 - fetches recent and historical runs for `/analyse run`
-- calls the AI Lambda (`POST /ai-coach`) to get coaching analyses for `/analyse run` and `/ai` chat queries
+- executes the integrated Gemini AI agent and run analysis engine locally to get coaching reports for `/analyse run` and `/ai` chat queries
 - posts the final result back through Discord's interaction follow-up webhook
 
-## 7. API Gateway Routes
-
-Terraform creates an HTTP API Gateway and routes them to the correct Lambda functions:
+Terraform creates an HTTP API Gateway and routes them to the HTTP Lambda function:
 
 - `aws_apigatewayv2_api.api`
-- Routes pointing to the HTTP Lambda (`aws_apigatewayv2_integration.health`):
+- Routes pointing to the HTTP Lambda (`aws_apigatewayv2_integration.api`):
   - `aws_apigatewayv2_route.health` (`GET /health`)
   - `aws_apigatewayv2_route.discord` (`POST /discord-interactions`)
   - `aws_apigatewayv2_route.strava_callback` (`GET /strava/callback`)
   - `aws_apigatewayv2_route.strava_verify` (`GET /strava/webhook`)
   - `aws_apigatewayv2_route.strava_event` (`POST /strava/webhook`)
-- Route pointing to the AI Lambda (`aws_apigatewayv2_integration.ai_coach`):
-  - `aws_apigatewayv2_route.ai_coach` (`POST /ai-coach`)
 
 API Gateway talks to the appropriate Lambda integrations, routing public endpoints cleanly.
 
-## 8. CI/CD
-
 The GitHub Actions workflow:
 
-- installs dependencies for all Lambdas (both `health` and `aiAnalysis`)
+- installs dependencies for the `api` Lambda
 - compiles TypeScript code and builds bundles
 - registers Discord slash commands with `scripts/registerCommand.js`
 - runs `terraform init` and `terraform apply` against the remote S3 backend

@@ -108,6 +108,7 @@ export const handleDiscordInteractions = async (event: {
     "`/strava` - Connect your Strava account",
     "`/stats` - Queue your weekly Strava stats",
     "`/club-activities` - Queue recent activities from the default Strava club",
+    "`/prs` - Show your personal records (fastest 5K, 10K, Half Marathon, longest run, biggest climb)",
     "`/analyse run` - Queue an AI review of your latest run and training trend",
     "`/ai <prompt>` - Chat with the AI coach using natural language",
     "`/help` - Show this message",
@@ -437,6 +438,52 @@ export const handleDiscordInteractions = async (event: {
         data: {
           content: "Could not queue your club request right now.",
         },
+      });
+    }
+  }
+
+  if (body.data?.name === "prs") {
+    const discordUserId = body.member?.user?.id ?? body.user?.id;
+
+    if (!discordUserId) {
+      return jsonResponse(200, {
+        type: 4,
+        data: { content: "Could not identify your Discord user." },
+      });
+    }
+
+    const queueUrl = process.env.SQS_QUEUE_URL;
+    if (!queueUrl) {
+      return jsonResponse(200, {
+        type: 4,
+        data: { content: "Queue is not configured yet." },
+      });
+    }
+
+    const message: DiscordSlashCommandJob = {
+      kind: "discord-slash-command",
+      commandName: "prs",
+      interactionToken: body.token,
+      discordUserId,
+    };
+
+    try {
+      const response = await sqs.send(
+        new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(message) })
+      );
+
+      console.log("Queued Discord slash command job", {
+        commandName: "prs",
+        discordUserId,
+        messageId: response.MessageId,
+      });
+
+      return jsonResponse(200, { type: 5 });
+    } catch (error) {
+      console.error("Failed to queue prs job", { discordUserId, error });
+      return jsonResponse(200, {
+        type: 4,
+        data: { content: "Could not queue your PR request right now." },
       });
     }
   }

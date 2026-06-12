@@ -1,30 +1,70 @@
 # RunBot
 
-Minimal AWS serverless backend for a Strava + Discord bot.
+A serverless AWS backend for a Strava + Discord bot. RunBot connects users' Strava accounts to Discord, automatically posts activity notifications, tracks personal records, and provides an integrated Gemini-powered AI running coach.
+
+## Features
+
+### Discord Slash Commands
+
+| Command | Description | Response |
+| :--- | :--- | :--- |
+| `/strava` | Generate a Strava OAuth link to connect your account | Instant |
+| `/stats` | Post your weekly running stats — distance, runs, pace, longest run, total time | Deferred |
+| `/club-activities` | Post the latest 30 activities from the configured Strava Club | Deferred |
+| `/analyse run` | Generate an AI coaching report on your latest run (Summary, Trend, Risks, Next Steps) | Deferred |
+| `/ai <prompt>` | Chat with the Gemini AI running coach in natural language | Deferred |
+| `/help` | List all available commands | Instant |
+
+Deferred commands return an immediate Type 5 acknowledgement to Discord (within Discord's 3-second limit) and post results asynchronously via a follow-up webhook once the background SQS Worker has finished.
+
+### Strava Integration
+
+- **OAuth Connect Flow** — Full authorization code exchange at `GET /strava/callback`. Tokens are persisted in DynamoDB and a branded HTML confirmation page is returned.
+- **Webhook Ingestion** — Validates Strava webhook challenges (`GET /strava/webhook`) and ingests new activity events (`POST /strava/webhook`) via SQS.
+- **Real-time Activity Notifications** — On every new or updated Strava activity, fetches full details, stores them in DynamoDB, and posts a Discord channel message with distance, pace, elapsed time, and PR count.
+- **Historical Backfill** — On account link, automatically queues a **730-day backfill** of historical Strava activities into DynamoDB.
+- **Automatic Token Refresh** — Checks token expiry before every Strava API call and refreshes if expiring within 1 hour.
+- **Discord DM on Link** — Sends the user a welcome DM listing available commands after successfully linking Strava.
+- **Channel Notification on Link** — Posts a public `@mention` in the configured channel announcing a new account connection.
+
+### Personal Records (PRs)
+
+- **Automatic Tracking** — Every incoming webhook activity is compared against stored PRs. Records are updated immediately if it is a new best.
+- **Categories** — Longest Run, Biggest Climb, Best 5K pace, Best 10K pace, Best Half Marathon pace.
+- **Bulk Recalculation** — After a full backfill, recalculates all PRs from scratch across the entire activity history.
+- **Incremental Updates** — Each new activity triggers a targeted read → compare → write update without reprocessing all history.
+- **Self-healing Fallback** — If the pre-computed PR record is missing, the AI agent falls back to on-the-fly PR calculations from all stored activities.
+
+### AI Running Coach (Gemini)
+
+- **Natural Language Chat** (`/ai`) — Conversational Gemini agent with tool-calling. Dynamically fetches run data to answer questions about training, pace, comparisons, and PRs.
+- **Structured Run Analysis** (`/analyse run`) — Generates a markdown coaching report using the latest run, 5 recent runs, 10 historical runs, and weekly stats summary.
+- **Gemini Tools** — The agent can call 5 tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`.
+- **Strava-aware Context** — Detects if a Strava account is linked and adjusts the system prompt accordingly.
+- **Tool Call Depth Limit** — Capped at 4 tool-call iterations to prevent runaway loops.
+
+### Platform & Infrastructure
+
+- **Global Rate Limiting** — Token-bucket limiter stored in DynamoDB, applied to all intensive commands. Max 5 tokens per user, 1 token refilled every 30 seconds. Rate-limited users receive an ephemeral Discord warning.
+- **Discord Signature Verification** — All incoming Discord webhook requests are verified with Ed25519 cryptographic signature validation using `tweetnacl`.
+- **SQS Retry with DLQ** — All background jobs are retried up to 5 times automatically before landing in a Dead Letter Queue.
+- **`GET /health` Endpoint** — Returns `{"status":"ok"}` for uptime monitoring and post-deploy health checks.
+
+---
 
 ## Stack
 
-- Node.js + TypeScript
-- AWS Lambda
+- Node.js 22 + TypeScript
+- AWS Lambda (2 functions: `api` gateway + `strava-worker`)
 - API Gateway HTTP API
-- Amazon SQS for webhook retry processing and deferred slash commands
-- Amazon DynamoDB for activity storage, rate limiting, and personal records tracking
-- Gemini API (v1beta model) for run analysis and natural language coaching
+- Amazon SQS (webhook retry + deferred slash commands)
+- Amazon DynamoDB (activities, personal records, rate limiting)
+- Gemini API (`gemini-2.5-flash`) for run analysis and AI coaching
 - Terraform
 
+---
+
 ## Environment
-
-Use `.env.example` as the placeholder reference:
-
-```text
-AWS_ACCESS_KEY=YOUR_KEY
-AWS_SECRET_KEY=YOUR_SECRET
-AWS_REGION=ap-southeast-1
-TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
-TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
-TF_VAR_ai_coach_token=YOUR_RANDOM_INTERNAL_TOKEN
-TF_VAR_gemini_api_key=YOUR_GEMINI_API_KEY
-```
 
 Terraform uses the standard AWS provider credential chain. Export credentials before applying:
 
@@ -34,19 +74,18 @@ export AWS_SECRET_ACCESS_KEY=YOUR_SECRET
 export AWS_REGION=ap-southeast-1
 export TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
 export TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
-export TF_VAR_ai_coach_token=YOUR_RANDOM_INTERNAL_TOKEN
 export TF_VAR_gemini_api_key=YOUR_GEMINI_API_KEY
 ```
+
+---
 
 ## Deploy
 
 ```bash
 terraform -chdir=infrastructure/bootstrap init
 terraform -chdir=infrastructure/bootstrap apply
-npm --prefix lambdas/health install
-npm --prefix lambdas/health run build
-npm --prefix lambdas/aiAnalysis install
-npm --prefix lambdas/aiAnalysis run build
+npm --prefix lambdas/api install
+npm --prefix lambdas/api run build
 cd infrastructure
 terraform init
 terraform apply
@@ -57,18 +96,20 @@ The deployment has two Terraform layers:
 - `infrastructure/bootstrap` creates the remote state bucket used by the main stack.
 - `infrastructure` provisions the application resources and uses the S3 backend in `backend.tf`.
 
-Terraform creates the HTTP Lambda, an SQS queue with a DLQ, and a second worker Lambda that processes queued Strava webhook jobs and deferred Discord slash commands. Terraform packages the Lambda bundles directly from `dist/` during `terraform apply`, so there is no manual zip step in the deploy flow.
+Terraform packages the Lambda bundles directly from `dist/` during `terraform apply`, so there is no manual zip step in the deploy flow.
 
 If these AWS resources already exist from an earlier run, import them into Terraform state once before applying the root stack:
 
 ```bash
-terraform -chdir=infrastructure import aws_iam_role.lambda_role health-lambda-role
+terraform -chdir=infrastructure import aws_iam_role.lambda_role api-lambda-role
 terraform -chdir=infrastructure import aws_dynamodb_table.activitybot ActivityBot
 ```
 
+---
+
 ## CI/CD
 
-The GitHub Actions workflow in [.github/workflows/cicd.yml](/Users/Andrew/RunBot/.github/workflows/cicd.yml) runs on push to `main` and manual dispatch.
+The GitHub Actions workflow in `.github/workflows/cicd.yml` runs on push to `main` and manual dispatch.
 
 It does four things:
 
@@ -85,16 +126,28 @@ Required GitHub Secrets:
 - `DISCORD_CHANNEL_ID`
 - `STRAVA_CLIENT_ID`
 - `STRAVA_CLIENT_SECRET`
-- `STRAVA_STATE_SECRET`
-- `AI_COACH_TOKEN`
 - `VERIFY_TOKEN`
+- `GEMINI_API_KEY`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
-- `GEMINI_API_KEY`
+
+---
+
+## Discord Setup
+
+Set the Discord Developer Portal **Interactions Endpoint URL** to:
+
+```
+API_URL/discord-interactions
+```
+
+The Lambda verifies `X-Signature-Ed25519` and `X-Signature-Timestamp` headers using the Discord application public key before responding to Discord's PING challenge.
+
+---
 
 ## Test
 
-After apply, use the `api_url` Terraform output:
+After apply, verify the deployment using the `api_url` Terraform output:
 
 ```bash
 curl API_URL/health
@@ -106,57 +159,20 @@ Expected response:
 {"status":"ok"}
 ```
 
-## Discord Interactions
+---
 
-Set the Discord Developer Portal Interactions Endpoint URL to:
+## Local Development
 
-```text
-API_URL/discord-interactions
-```
-
-The Lambda verifies `X-Signature-Ed25519` and `X-Signature-Timestamp` using
-the Discord application public key before responding to Discord's PING request.
-
-The slash-command flow supports:
-- `/analyse run`: Queues an AI run analysis job. The worker gathers the user's latest run, 5 recent runs, 10 historical runs, and weekly statistics, fetches the coaching report from `/ai-coach` (which queries Gemini), and posts a structured report (Summary, Trend, Risks, Next Steps) back to Discord.
-- `/ai <prompt>`: Allows freeform natural-language chat with the AI coach. It uses a tool-calling loop where the Gemini agent can dynamically request Strava data (latest run, recent runs, weekly stats, or run comparisons) to construct its answer.
-
-The AI endpoint is also exposed at:
-
-```text
-API_URL/ai-coach
-```
-
-## Personal Records Tracking
-
-The bot automatically tracks and stores running personal records (PRs) for users in DynamoDB (`SK = PERSONAL_RECORDS`). 
-- **Records tracked**: Longest Run, Biggest Climb (using activity `total_elevation_gain`), and best paces for 5k, 10k, and Half Marathon.
-- **Incremental updates**: Evaluated in the worker Lambda upon receiving a new activity webhook.
-- **Backfill processing**: Accessible via SQS (`strava-backfill` job) to calculate and populate historical PRs from a user's activity history.
-
-## Global Rate Limiting
-
-To prevent command abuse and API key exhaustion, intensive slash commands (`/stats`, `/club-activities`, `/analyse run`, `/ai`) are rate-limited via a DynamoDB token-bucket rate limiter.
-- **Max capacity**: 5 tokens per user.
-- **Refill rate**: 1 token refilled every 30 seconds.
-- User requests exceeding the rate limit receive an ephemeral Discord warning indicating the remaining cooldown duration.
-
-## Strava Webhooks
-
-The `/strava/webhook` endpoint validates the webhook signature/challenge and enqueues a job in SQS. A worker Lambda consumes that job, fetches the Strava activity, stores it in DynamoDB, updates personal records, and posts to Discord. The `/discord-interactions` endpoint defers heavy interactions (`/stats`, `/club-activities`, `/analyse run`, `/ai`) by enqueuing work in SQS, responding to Discord immediately, and utilizing follow-up webhooks. Failed jobs are retried automatically and moved to the DLQ after repeated failures.
-
-## Local Development & Testing
-
-You can run a local mock Lambda environment to test API routes and webhook callbacks without deploying to AWS:
+Run a local mock API Gateway to test HTTP routes without deploying to AWS:
 
 ```bash
-# Start local mock API Gateway server (runs on http://localhost:3000)
+npm run build
 node scripts/serve-local.js
+# Server runs at http://localhost:3000
 ```
 
-You can also run the interactive CLI script to test Strava API token exchanges and activity lookups:
+Test Strava API token exchange and activity lookups interactively:
 
 ```bash
-# Run interactive Strava API client test script
 node scripts/test-strava.js
 ```

@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm --prefix lambdas/health run build",
+    "build": "npm --prefix lambdas/api run build",
     "start:local": "node scripts/serve-local.js",
     "dev": "npm run build && node scripts/serve-local.js",
     "terraform:init": "terraform -chdir=infrastructure init",

@@ -5,7 +5,7 @@ import {
   type StravaActivity,
   type StravaUserRecord,
 } from "./stravaApi";
-import { calculateWeeklyStats, getCurrentWeekStartUnixSeconds } from "./stravaStats";
+import { calculateWeeklyStats, getCurrentWeekStartUnixSeconds } from "./stravaFormatting";
 
 declare const process: {
   env: {
@@ -72,6 +72,44 @@ type RunComparisonSummary = {
 type AgentContext = {
   discordUserId: string;
   linkedStravaUser?: StravaUserRecord;
+};
+
+type StravaActivityContext = {
+  id?: number;
+  name?: string;
+  sport_type?: string;
+  type?: string;
+  start_date?: string;
+  distance?: number;
+  moving_time?: number;
+  elapsed_time?: number;
+  pr_count?: number;
+};
+
+type WeeklySummary = {
+  distanceMeters?: number;
+  runCount?: number;
+  movingTimeSeconds?: number;
+  elapsedTimeSeconds?: number;
+  longestRunMeters?: number;
+};
+
+type AnalysisInput = {
+  athleteName?: string;
+  latestRun?: StravaActivityContext;
+  recentRuns?: StravaActivityContext[];
+  historicalRuns?: StravaActivityContext[];
+  weeklySummary?: WeeklySummary;
+  activityName?: string;
+  activityType?: string;
+  distanceMeters?: number;
+  movingTimeSeconds?: number;
+  elapsedTimeSeconds?: number;
+  averageHeartRate?: number;
+  maxHeartRate?: number;
+  averageSpeedMetersPerSecond?: number;
+  description?: string;
+  notes?: string;
 };
 
 const MAX_TOOL_CALLS = 4;
@@ -663,4 +701,124 @@ export const runNaturalLanguageAi = async (
   }
 
   return finalText || "I could not finish the request in time.";
+};
+
+// Analysis Report builder logic
+const formatAnalysisDistanceKm = (meters?: number) => {
+  if (meters == null || Number.isNaN(meters)) {
+    return "n/a";
+  }
+
+  return `${(meters / 1000).toFixed(2)} km`;
+};
+
+const formatAnalysisPace = (movingTime?: number, distanceMeters?: number) => {
+  if (!movingTime || !distanceMeters || distanceMeters <= 0) {
+    return "n/a";
+  }
+
+  const secondsPerKm = Math.round(movingTime / (distanceMeters / 1000));
+  const minutes = Math.floor(secondsPerKm / 60);
+  const seconds = secondsPerKm % 60;
+
+  return `${minutes}:${String(seconds).padStart(2, "0")} /km`;
+};
+
+const formatRunForAnalysis = (run: StravaActivityContext, index?: number) => {
+  const prefix = typeof index === "number" ? `${index + 1}. ` : "- ";
+  return [
+    `${prefix}${run.name ?? "Unnamed run"}`,
+    run.start_date ? `  Date: ${run.start_date}` : undefined,
+    run.sport_type || run.type ? `  Type: ${run.sport_type ?? run.type}` : undefined,
+    `  Distance: ${formatAnalysisDistanceKm(run.distance)}`,
+    `  Moving time: ${run.moving_time != null ? `${run.moving_time}s` : "n/a"}`,
+    `  Pace: ${formatAnalysisPace(run.moving_time, run.distance)}`,
+    run.pr_count != null ? `  PRs: ${run.pr_count}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n");
+};
+
+const buildAnalysisPrompt = (input: AnalysisInput) => {
+  const latestRun = input.latestRun ?? {
+    name: input.activityName,
+    type: input.activityType,
+    distance: input.distanceMeters,
+    moving_time: input.movingTimeSeconds,
+    elapsed_time: input.elapsedTimeSeconds,
+  };
+
+  const recentRuns = input.recentRuns ?? [];
+  const historicalRuns = input.historicalRuns ?? [];
+
+  return [
+    "You are a concise running coach.",
+    "Write a coaching report in markdown with these sections exactly:",
+    "Summary",
+    "Trend",
+    "Risks",
+    "Next Steps",
+    "Use the latest run plus recent and historical context.",
+    "Keep it specific, practical, and grounded in the data.",
+    `Athlete: ${input.athleteName ?? "unknown"}`,
+    "",
+    "Latest run:",
+    formatRunForAnalysis(latestRun),
+    "",
+    "Recent runs:",
+    recentRuns.length > 0 ? recentRuns.map((run, index) => formatRunForAnalysis(run, index)).join("\n\n") : "None available",
+    "",
+    "Historical runs:",
+    historicalRuns.length > 0 ? historicalRuns.map((run, index) => formatRunForAnalysis(run, index)).join("\n\n") : "None available",
+    "",
+    "Weekly summary:",
+    `Distance: ${formatAnalysisDistanceKm(input.weeklySummary?.distanceMeters)}`,
+    `Runs: ${input.weeklySummary?.runCount ?? "n/a"}`,
+    `Moving time: ${input.weeklySummary?.movingTimeSeconds != null ? `${input.weeklySummary.movingTimeSeconds}s` : "n/a"}`,
+    `Elapsed time: ${input.weeklySummary?.elapsedTimeSeconds != null ? `${input.weeklySummary.elapsedTimeSeconds}s` : "n/a"}`,
+    `Longest run: ${formatAnalysisDistanceKm(input.weeklySummary?.longestRunMeters)}`,
+  ].join("\n");
+};
+
+export const runRunAnalysis = async (input: AnalysisInput) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+
+  const prompt = buildAnalysisPrompt(input);
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${
+      process.env.GEMINI_MODEL ?? "gemini-2.5-flash"
+    }:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to analyze run: ${response.status} ${errorBody}`);
+  }
+
+  const data = (await response.json()) as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{ text?: string }>;
+      };
+    }>;
+  };
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 };

@@ -26,13 +26,12 @@ import {
   getCurrentWeekStartUnixSeconds,
 } from "../stravaFormatting";
 import { postDiscordInteractionFollowUp } from "../discord";
+import { runNaturalLanguageAi, runRunAnalysis } from "../agent";
 
 declare const process: {
   env: {
     DISCORD_BOT_TOKEN?: string;
     DISCORD_CHANNEL_ID?: string;
-    AI_COACH_URL?: string;
-    AI_COACH_TOKEN?: string;
   };
 };
 
@@ -106,29 +105,6 @@ const dedupeAndSortRuns = (
   return [...deduped.values()].sort(
     (a, b) => getActivityTimestamp(b) - getActivityTimestamp(a)
   );
-};
-
-const callAiCoach = async (payload: unknown) => {
-  if (!process.env.AI_COACH_URL) {
-    throw new Error("AI coach endpoint is not configured.");
-  }
-
-  const response = await fetch(process.env.AI_COACH_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-runbot-ai-token": process.env.AI_COACH_TOKEN ?? "",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`AI coach failed: ${response.status} ${errorBody}`);
-  }
-
-  const data = (await response.json()) as { analysis?: string };
-  return data.analysis ?? "";
 };
 
 const recalculatePersonalRecords = async (discordUserId: string, allActivities: StravaActivity[]) => {
@@ -327,11 +303,24 @@ const handleBackfillJob = async (job: StravaBackfillJob) => {
 };
 
 const handleWebhookJob = async (job: StravaWebhookJob) => {
+  console.log("[strava-webhook] Processing webhook job", {
+    ownerId: job.ownerId,
+    activityId: job.activityId,
+    objectType: job.objectType,
+    aspectType: job.aspectType,
+  });
+
   if (job.objectType !== "activity" || !["create", "update"].includes(job.aspectType)) {
-    console.log("Ignoring non-notifiable Strava webhook job", job);
+    console.log("[strava-webhook] Ignoring non-notifiable Strava webhook job", {
+      ownerId: job.ownerId,
+      objectType: job.objectType,
+      aspectType: job.aspectType,
+    });
     return;
   }
 
+  // Step 1: Look up the Discord user linked to this Strava owner
+  console.log("[strava-webhook] Looking up linked Discord user", { ownerId: job.ownerId });
   const result = await db.send(
     new QueryCommand({
       TableName: "ActivityBot",
@@ -346,7 +335,7 @@ const handleWebhookJob = async (job: StravaWebhookJob) => {
   const user = result.Items?.[0];
 
   if (!user) {
-    console.log("No linked Discord user found for Strava owner", {
+    console.warn("[strava-webhook] No linked Discord user found for Strava owner — ignoring", {
       ownerId: job.ownerId,
     });
     return;
@@ -354,8 +343,26 @@ const handleWebhookJob = async (job: StravaWebhookJob) => {
 
   const typedUser = user as StravaUserRecord;
   const discordUserId = user.DiscordID ?? typedUser.PK.replace("USER#", "");
-  const activity = await fetchStravaActivity(typedUser, job.activityId);
+  console.log("[strava-webhook] Found linked Discord user", { discordUserId, ownerId: job.ownerId });
 
+  // Step 2: Fetch full activity details from Strava
+  console.log("[strava-webhook] Fetching activity from Strava API", { activityId: job.activityId });
+  const activity = await fetchStravaActivity(typedUser, job.activityId);
+  console.log("[strava-webhook] Fetched activity from Strava", {
+    activityId: activity.id,
+    name: activity.name,
+    type: activity.type,
+    sport_type: activity.sport_type,
+    distance: activity.distance,
+    moving_time: activity.moving_time,
+    start_date: activity.start_date,
+  });
+
+  // Step 3: Upsert activity into DynamoDB
+  console.log("[strava-webhook] Saving activity to DynamoDB", {
+    pk: `USER#${discordUserId}`,
+    sk: `ACTIVITY#${activity.id}`,
+  });
   await db.send(
     new PutCommand({
       TableName: "ActivityBot",
@@ -368,36 +375,61 @@ const handleWebhookJob = async (job: StravaWebhookJob) => {
       },
     })
   );
+  console.log("[strava-webhook] Activity saved to DynamoDB", { activityId: activity.id });
 
+  // Step 4: Update personal records (running activities only)
   if (isRunningActivity(activity)) {
+    console.log("[strava-webhook] Activity is a run — checking personal records", { activityId: activity.id });
     try {
       await updatePersonalRecordsRecord(discordUserId, activity);
     } catch (err: any) {
-      console.error("Failed to update personal records:", err.message);
+      console.error("[strava-webhook] Failed to update personal records", {
+        activityId: activity.id,
+        discordUserId,
+        error: err.message,
+      });
     }
+  } else {
+    console.log("[strava-webhook] Activity is not a run — skipping PR check", {
+      activityId: activity.id,
+      type: activity.type,
+      sport_type: activity.sport_type,
+    });
   }
 
+  // Step 5: Post Discord notification
+  console.log("[strava-webhook] Posting Discord notification", {
+    activityId: activity.id,
+    discordUserId,
+  });
   const discordResponse = await postDiscordMessage(
     buildStravaActivityMessage(activity, discordUserId)
   );
 
   if (!discordResponse.ok) {
     const errorBody = await discordResponse.text();
+    console.error("[strava-webhook] Discord message failed", {
+      activityId: activity.id,
+      status: discordResponse.status,
+      body: errorBody,
+    });
     throw new Error(
       `Discord message failed: ${discordResponse.status} ${errorBody}`
     );
   }
 
-  console.log("Discord message sent for Strava activity", {
+  console.log("[strava-webhook] ✅ Activity fully processed and Discord notified", {
     ownerId: job.ownerId,
     activityId: job.activityId,
+    discordUserId,
+    activityName: activity.name,
   });
 };
 
 const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
   const user = await getLinkedStravaUserByDiscordId(job.discordUserId);
 
-  if (!user && job.commandName !== "ai-chat") {
+  if (!user && job.commandName !== "ai-chat" && job.commandName !== "prs") {
     const response = await postDiscordInteractionFollowUp(
       job.interactionToken,
       "No Strava account is linked yet. Run `/strava` first."
@@ -416,11 +448,79 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
   const linkedUser = user as NonNullable<typeof user>;
 
   try {
+    if (job.commandName === "prs") {
+      const result = await db.send(
+        new GetCommand({
+          TableName: "ActivityBot",
+          Key: { PK: `USER#${job.discordUserId}`, SK: "PERSONAL_RECORDS" },
+        })
+      );
+
+      const prs = result.Item?.personalRecords as Record<string, any> | undefined;
+
+      let message: string;
+      if (!prs || Object.keys(prs).length === 0) {
+        message = "No personal records found yet. Complete some runs and they will appear here!";
+      } else {
+        const formatPace = (activity: any): string => {
+          const distM: number = activity?.distance ?? 0;
+          const timeS: number = activity?.moving_time ?? 0;
+          if (!distM || !timeS) return "—";
+          const paceSecPerKm = timeS / (distM / 1000);
+          const mins = Math.floor(paceSecPerKm / 60);
+          const secs = Math.round(paceSecPerKm % 60).toString().padStart(2, "0");
+          return `${mins}:${secs}/km`;
+        };
+
+        const formatDist = (activity: any): string => {
+          const distM: number = activity?.distance ?? 0;
+          return distM ? `${(distM / 1000).toFixed(2)} km` : "—";
+        };
+
+        const formatDate = (activity: any): string => {
+          if (!activity?.start_date) return "";
+          return ` (${new Date(activity.start_date).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })})`;
+        };
+
+        const lines = [
+          "🏆 **Your Personal Records**",
+          "",
+        ];
+
+        if (prs.longestRun) {
+          lines.push(`🛣️ **Longest Run** — ${formatDist(prs.longestRun)}${formatDate(prs.longestRun)}`);
+        }
+        if (prs.biggestClimb) {
+          const climb = ((prs.biggestClimb.total_elevation_gain ?? 0) as number).toFixed(0);
+          lines.push(`⛰️ **Biggest Climb** — ${climb}m elevation${formatDate(prs.biggestClimb)}`);
+        }
+        if (prs.best5k) {
+          lines.push(`⚡ **Best 5K pace** — ${formatPace(prs.best5k)}${formatDate(prs.best5k)}`);
+        }
+        if (prs.best10k) {
+          lines.push(`🔥 **Best 10K pace** — ${formatPace(prs.best10k)}${formatDate(prs.best10k)}`);
+        }
+        if (prs.bestHalfMarathon) {
+          lines.push(`🎽 **Best Half Marathon pace** — ${formatPace(prs.bestHalfMarathon)}${formatDate(prs.bestHalfMarathon)}`);
+        }
+
+        message = lines.join("\n");
+      }
+
+      const response = await postDiscordInteractionFollowUp(job.interactionToken, message);
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Discord follow-up failed: ${response.status} ${errorBody}`);
+      }
+
+      return;
+    }
+
     if (job.commandName === "ai-chat") {
-      const analysis = await callAiCoach({
-        prompt: job.prompt ?? "",
-        discordUserId: job.discordUserId,
-      });
+      const analysis = await runNaturalLanguageAi(
+        job.prompt ?? "",
+        job.discordUserId
+      );
 
       const response = await postDiscordInteractionFollowUp(
         job.interactionToken,
@@ -484,7 +584,7 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
         return;
       }
 
-      const analysis = await callAiCoach({
+      const analysis = await runRunAnalysis({
         athleteName: "unknown",
         latestRun,
         recentRuns,
@@ -550,30 +650,37 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob) => {
 export const handleProcessStravaWebhook = async (event: {
   Records?: Array<{ body?: string }>;
 }) => {
+  console.log("[worker] SQS event received", { recordCount: event.Records?.length ?? 0 });
+
   for (const record of event.Records ?? []) {
     let parsed: unknown;
 
     try {
       parsed = JSON.parse(record.body ?? "{}");
     } catch (error) {
+      console.error("[worker] Failed to parse SQS message body", { error: String(error) });
       throw new Error(`Invalid SQS message body: ${String(error)}`);
     }
 
     if (isStravaWebhookJob(parsed)) {
+      console.log("[worker] Dispatching strava-webhook job", { activityId: parsed.activityId, ownerId: parsed.ownerId });
       await handleWebhookJob(parsed);
       continue;
     }
 
     if (isStravaBackfillJob(parsed)) {
+      console.log("[worker] Dispatching strava-backfill job", { discordUserId: parsed.discordUserId });
       await handleBackfillJob(parsed);
       continue;
     }
 
     if (isDiscordSlashCommandJob(parsed)) {
+      console.log("[worker] Dispatching discord-slash-command job", { commandName: parsed.commandName, discordUserId: parsed.discordUserId });
       await handleDiscordSlashCommandJob(parsed);
       continue;
     }
 
+    console.error("[worker] Unrecognised SQS job type", { body: record.body });
     throw new Error("Invalid queue job");
   }
 };

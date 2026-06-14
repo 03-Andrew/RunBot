@@ -15,7 +15,7 @@ data "archive_file" "api_zip" {
 # IAM Role
 ################################
 
-resource "aws_iam_role" "lambda_role" {
+resource "aws_iam_role" "api_lambda_role" {
   name = "api-lambda-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -31,9 +31,29 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
+resource "aws_iam_role" "worker_lambda_role" {
+  name = "worker-lambda-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
 
-resource "aws_iam_role_policy_attachment" "basic" {
-  role       = aws_iam_role.lambda_role.name
+resource "aws_iam_role_policy_attachment" "api_basic" {
+  role       = aws_iam_role.api_lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "worker_basic" {
+  role       = aws_iam_role.worker_lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
@@ -63,7 +83,7 @@ resource "aws_sqs_queue" "strava_webhook_queue" {
 
 resource "aws_lambda_function" "api" {
   function_name    = "api"
-  role             = aws_iam_role.lambda_role.arn
+  role             = aws_iam_role.api_lambda_role.arn
   runtime          = "nodejs22.x"
   handler          = "index.handler"
   filename         = data.archive_file.api_zip.output_path
@@ -81,13 +101,13 @@ resource "aws_lambda_function" "api" {
     }
   }
   depends_on = [
-    aws_iam_role_policy_attachment.basic
+    aws_iam_role_policy_attachment.api_basic
   ]
 }
 
 resource "aws_lambda_function" "strava_worker" {
   function_name    = "strava-worker"
-  role             = aws_iam_role.lambda_role.arn
+  role             = aws_iam_role.worker_lambda_role.arn
   runtime          = "nodejs22.x"
   handler          = "worker.handler"
   filename         = data.archive_file.api_zip.output_path
@@ -104,7 +124,7 @@ resource "aws_lambda_function" "strava_worker" {
     }
   }
   depends_on = [
-    aws_iam_role_policy_attachment.basic
+    aws_iam_role_policy_attachment.worker_basic
   ]
 }
 
@@ -209,25 +229,19 @@ resource "aws_lambda_event_source_mapping" "strava_webhook_queue" {
   batch_size       = 1
 }
 
-resource "aws_iam_role_policy" "dynamo" {
-
-  role = aws_iam_role.lambda_role.id
+resource "aws_iam_role_policy" "api_dynamo" {
+  role = aws_iam_role.api_lambda_role.id
 
   policy = jsonencode({
-
     Version = "2012-10-17"
-
     Statement = [{
-
       Effect = "Allow"
-
       Action = [
         "dynamodb:PutItem",
         "dynamodb:GetItem",
         "dynamodb:Query",
         "dynamodb:UpdateItem"
       ]
-
       Resource = [
         aws_dynamodb_table.activitybot.arn,
         "${aws_dynamodb_table.activitybot.arn}/index/*"
@@ -236,10 +250,29 @@ resource "aws_iam_role_policy" "dynamo" {
   })
 }
 
+resource "aws_iam_role_policy" "worker_dynamo" {
+  role = aws_iam_role.worker_lambda_role.id
 
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem"
+      ]
+      Resource = [
+        aws_dynamodb_table.activitybot.arn,
+        "${aws_dynamodb_table.activitybot.arn}/index/*"
+      ]
+    }]
+  })
+}
 
 resource "aws_iam_role_policy" "sqs_producer" {
-  role = aws_iam_role.lambda_role.id
+  role = aws_iam_role.api_lambda_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -253,8 +286,40 @@ resource "aws_iam_role_policy" "sqs_producer" {
   })
 }
 
+resource "aws_iam_role_policy" "api_kms" {
+  role = aws_iam_role.api_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt",
+        "kms:CreateGrant"
+      ]
+      Resource = "arn:aws:kms:ap-southeast-1:942114769797:alias/aws/lambda"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "worker_kms" {
+  role = aws_iam_role.worker_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt",
+        "kms:CreateGrant"
+      ]
+      Resource = "arn:aws:kms:ap-southeast-1:942114769797:alias/aws/lambda"
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "sqs_consumer" {
-  role = aws_iam_role.lambda_role.id
+  role = aws_iam_role.worker_lambda_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"

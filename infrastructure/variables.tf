@@ -31,7 +31,7 @@ variable "discord_channel_id" {
 }
 
 
-variable "gemini_api_key" {
+variable "deepseek_api_key" {
   type      = string
   sensitive = true
 }

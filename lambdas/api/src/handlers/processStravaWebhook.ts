@@ -26,7 +26,8 @@ import {
   getCurrentWeekStartUnixSeconds,
 } from "../stravaFormatting";
 import { postDiscordInteractionFollowUp } from "../discord";
-import { runNaturalLanguageAi, runRunAnalysis } from "../agent";
+import { runNaturalLanguageAi } from "../ai/agent";
+import { runRunAnalysis } from "../ai/runAnalysis";
 
 declare const process: {
   env: {

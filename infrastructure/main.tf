@@ -100,7 +100,7 @@ resource "aws_lambda_function" "strava_worker" {
       DISCORD_APPLICATION_ID = var.discord_application_id
       DISCORD_BOT_TOKEN      = var.discord_bot_token
       DISCORD_CHANNEL_ID     = var.discord_channel_id
-      GEMINI_API_KEY         = var.gemini_api_key
+      DEEPSEEK_API_KEY        = var.deepseek_api_key
     }
   }
   depends_on = [
@@ -236,7 +236,7 @@ resource "aws_iam_role_policy" "dynamo" {
   })
 }
 
-# ai_dynamo policy removed.
+
 
 resource "aws_iam_role_policy" "sqs_producer" {
   role = aws_iam_role.lambda_role.id

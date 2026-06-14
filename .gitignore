@@ -10,3 +10,8 @@ steps.txt
 .codexignore
 lambdas/*/dist/
 .geminiignore
+.claudeignore
+DATABASE.md
+ARCHITECTURE.md
+TF.md
+IAM_POLICIES.md

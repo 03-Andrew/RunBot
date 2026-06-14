@@ -199,6 +199,25 @@ export const getStoredPersonalRecordsByDiscordId = async (discordUserId: string)
   return result.Item as { personalRecords?: Record<string, StravaActivity> } | undefined;
 };
 
+export const sanitizeForDynamoDB = <T>(obj: T): T => {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === "number") {
+    if (obj > Number.MAX_SAFE_INTEGER || obj < Number.MIN_SAFE_INTEGER) {
+      return String(obj) as unknown as T;
+    }
+    return obj;
+  }
+  if (Array.isArray(obj)) return obj.map(sanitizeForDynamoDB) as unknown as T;
+  if (typeof obj === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      sanitized[k] = sanitizeForDynamoDB(v);
+    }
+    return sanitized as T;
+  }
+  return obj;
+};
+
 export const fetchStravaActivity = async (
   user: StravaUserRecord,
   activityId: number

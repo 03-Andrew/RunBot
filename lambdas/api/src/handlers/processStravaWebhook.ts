@@ -7,6 +7,7 @@ import {
   getClubById,
   getLinkedStravaUserByDiscordId,
   getStoredStravaActivitiesByDiscordId,
+  sanitizeForDynamoDB,
   type StravaActivity,
   type StravaUserRecord,
 } from "../stravaApi";
@@ -165,13 +166,13 @@ const recalculatePersonalRecords = async (discordUserId: string, allActivities: 
   await db.send(
     new PutCommand({
       TableName: "ActivityBot",
-      Item: {
+      Item: sanitizeForDynamoDB({
         PK: `USER#${discordUserId}`,
         SK: "PERSONAL_RECORDS",
         DiscordID: discordUserId,
         UpdatedAt: new Date().toISOString(),
         personalRecords: prs,
-      },
+      }),
     })
   );
   console.log(`Successfully saved pre-computed PRs for user ${discordUserId}`);
@@ -250,13 +251,13 @@ const updatePersonalRecordsRecord = async (discordUserId: string, newActivity: S
     await db.send(
       new PutCommand({
         TableName: "ActivityBot",
-        Item: {
+        Item: sanitizeForDynamoDB({
           PK: `USER#${discordUserId}`,
           SK: "PERSONAL_RECORDS",
           DiscordID: discordUserId,
           UpdatedAt: new Date().toISOString(),
           personalRecords: prs,
-        },
+        }),
       })
     );
     console.log(`Updated pre-computed PRs for user ${discordUserId}`);
@@ -286,13 +287,13 @@ const handleBackfillJob = async (job: StravaBackfillJob) => {
       await db.send(
         new PutCommand({
           TableName: "ActivityBot",
-          Item: {
+          Item: sanitizeForDynamoDB({
             PK: `USER#${discordUserId}`,
             SK: `ACTIVITY#${activity.id}`,
             DiscordID: discordUserId,
             UpdatedAt: new Date().toISOString(),
             ...activity,
-          },
+          }),
         })
       );
     }
@@ -367,13 +368,13 @@ const handleWebhookJob = async (job: StravaWebhookJob) => {
   await db.send(
     new PutCommand({
       TableName: "ActivityBot",
-      Item: {
+      Item: sanitizeForDynamoDB({
         PK: `USER#${discordUserId}`,
         SK: `ACTIVITY#${activity.id}`,
         DiscordID: discordUserId,
         UpdatedAt: new Date().toISOString(),
         ...activity,
-      },
+      }),
     })
   );
   console.log("[strava-webhook] Activity saved to DynamoDB", { activityId: activity.id });

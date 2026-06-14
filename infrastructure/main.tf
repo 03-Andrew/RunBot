@@ -337,6 +337,111 @@ resource "aws_iam_role_policy" "sqs_consumer" {
 }
 
 ################################
+# Weekly Recap Lambda + Scheduler
+################################
+
+resource "aws_iam_role" "weekly_recap_lambda_role" {
+  name = "weekly-recap-lambda-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "weekly_recap_basic" {
+  role       = aws_iam_role.weekly_recap_lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "weekly_recap_dynamo" {
+  role = aws_iam_role.weekly_recap_lambda_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ]
+      Resource = [
+        aws_dynamodb_table.activitybot.arn,
+        "${aws_dynamodb_table.activitybot.arn}/index/*"
+      ]
+    }]
+  })
+}
+
+resource "aws_lambda_function" "weekly_recap" {
+  function_name    = "weekly-recap"
+  role             = aws_iam_role.weekly_recap_lambda_role.arn
+  runtime          = "nodejs22.x"
+  handler          = "weeklyRecap.handler"
+  filename         = data.archive_file.api_zip.output_path
+  source_code_hash = data.archive_file.api_zip.output_base64sha256
+  timeout          = 180
+  environment {
+    variables = {
+      DISCORD_BOT_TOKEN  = var.discord_bot_token
+      DISCORD_CHANNEL_ID = var.discord_channel_id
+      DEEPSEEK_API_KEY    = var.deepseek_api_key
+    }
+  }
+  depends_on = [
+    aws_iam_role_policy_attachment.weekly_recap_basic
+  ]
+}
+
+resource "aws_iam_role" "weekly_recap_scheduler_role" {
+  name = "weekly-recap-scheduler-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "weekly_recap_scheduler" {
+  role = aws_iam_role.weekly_recap_scheduler_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.weekly_recap.arn
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "weekly_recap" {
+  name = "weekly-recap"
+  flexible_time_window {
+    mode                      = "FLEXIBLE"
+    maximum_window_in_minutes = 5
+  }
+  schedule_expression = "cron(0 16 ? * 7 *)"
+  target {
+    arn      = aws_lambda_function.weekly_recap.arn
+    role_arn = aws_iam_role.weekly_recap_scheduler_role.arn
+  }
+}
+
+resource "aws_lambda_permission" "weekly_recap" {
+  statement_id  = "AllowSchedulerInvocation"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.weekly_recap.function_name
+  principal     = "scheduler.amazonaws.com"
+  source_arn    = aws_scheduler_schedule.weekly_recap.arn
+}
+
+################################
 # Dynamo DB
 ################################
 

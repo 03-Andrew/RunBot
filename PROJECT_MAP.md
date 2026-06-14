@@ -22,10 +22,12 @@ Terraform for the AWS deployment.
 - `main.tf`: the main infrastructure definition. It creates:
   - the HTTP Lambda function (`api`) — handles all public HTTP endpoints
   - the SQS Worker Lambda function (`strava-worker`) — processes background jobs with integrated Gemini AI
+  - the Weekly Recap Lambda function (`weekly-recap`) — automated Sunday recap via EventBridge Scheduler
   - API Gateway routes and integrations
   - the DynamoDB table (`ActivityBot`) with a GSI (`GSI1`) for Strava ID lookups
   - SQS queue and DLQ for retry/deferral flows
-  - IAM permissions and roles
+  - EventBridge Scheduler for cron-based weekly recap invocation
+  - IAM permissions and roles (6 roles: api, worker, weekly-recap Lambda, weekly-recap scheduler, plus KMS policies)
 - `outputs.tf`: exported values such as the API URL.
 
 ### `lambdas/api/`
@@ -46,6 +48,7 @@ Application code for both the HTTP (`api`) and SQS Worker (`strava-worker`) Lamb
 
 - `src/index.ts`: Route dispatcher for the HTTP (`api`) Lambda. Handles `GET /health`, and routes `/discord-interactions`, `/strava/callback`, and `/strava/webhook` to the correct handler.
 - `src/worker.ts`: Entry point for the SQS Worker Lambda. Receives SQS Records and calls `handleProcessStravaWebhook`.
+- `src/weeklyRecap.ts`: Entry point for the `weekly-recap` Lambda. Triggered by EventBridge Scheduler every Sunday. Scans all linked athletes, compiles weekly stats with DeepSeek AI insights, and posts the recap to Discord.
 
 ### Route handlers (HTTP Lambda)
 
@@ -79,6 +82,7 @@ Application code for both the HTTP (`api`) and SQS Worker (`strava-worker`) Lamb
 - `src/discord.ts`: Ed25519 request signature validator, Strava OAuth URL builder, `postDiscordMessage`, `postDiscordInteractionFollowUp`, and `sendDiscordDM`.
 - `src/stravaApi.ts`: Strava API client. Handles OAuth token refresh, fetches individual activities, paginated activity lists, club activities, and queries the DynamoDB user and activity stores.
 - `src/stravaFormatting.ts`: Stats compilation (`calculateWeeklyStats`, `getCurrentWeekStartUnixSeconds`), Discord message formatters for activities (`buildStravaActivityMessage`), weekly stats (`buildWeeklyStatsMessage`), and club feeds (`buildClubActivitiesMessageForClub`).
+- `src/weeklyRecap.ts`: Weekly recap handler. Scans all `USER#` profiles via DynamoDB Scan, fetches each athlete's current-week activities, computes stats via `calculateWeeklyStats`, calls DeepSeek for 1-2 sentence AI coaching insight per athlete, and posts multi-message recap to Discord.
 - `src/types.ts`: Central TypeScript type definitions and runtime type-guards for `DiscordSlashCommandJob`, `StravaWebhookJob`, `StravaBackfillJob`, and `ApiGatewayEvent`.
 
 ---
@@ -130,6 +134,17 @@ GET /strava/callback (OAuth return)
     ├── Post Discord channel + DM notification
     ├── Queue 730-day historical backfill
     └── Return HTML confirmation page
+
+EventBridge Scheduler (cron)
+    │
+    ▼
+weekly-recap Lambda
+    │
+    ├── Scan DynamoDB (all USER# profiles)
+    ├── Fetch each athlete's current-week activities
+    ├── Calculate weekly stats
+    ├── Call DeepSeek for AI coaching insight
+    └── Post recap to Discord channel
 ```
 
 ---

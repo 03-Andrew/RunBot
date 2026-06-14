@@ -15,6 +15,10 @@ A serverless AWS backend for a Strava + Discord bot. RunBot connects users' Stra
 | `/ai <prompt>` | Chat with the Gemini AI running coach in natural language | Deferred |
 | `/help` | List all available commands | Instant |
 
+### Automated Weekly Recap
+
+Every **Monday at 12:00 AM Philippine Time** (16:00 UTC), EventBridge Scheduler invokes `weekly-recap` Lambda. The function scans all linked athletes, compiles each athlete's weekly running stats, generates a DeepSeek AI coaching insight, and posts a full recap to the configured Discord channel. No manual command needed.
+
 Deferred commands return an immediate Type 5 acknowledgement to Discord (within Discord's 3-second limit) and post results asynchronously via a follow-up webhook once the background SQS Worker has finished.
 
 ### Strava Integration
@@ -35,6 +39,13 @@ Deferred commands return an immediate Type 5 acknowledgement to Discord (within 
 - **Incremental Updates** — Each new activity triggers a targeted read → compare → write update without reprocessing all history.
 - **Self-healing Fallback** — If the pre-computed PR record is missing, the AI agent falls back to on-the-fly PR calculations from all stored activities.
 
+### Weekly Recap (DeepSeek)
+
+- **Automated Weekly Post** — Every Monday at 12:00 am PH time, EventBridge triggers a Lambda that scans all linked athletes and posts a weekly recap to Discord.
+- **Per-Athlete Stats** — Each athlete gets distance, run count, average pace, longest run, and total elapsed time.
+- **AI Coaching Insight** — DeepSeek generates a 1-2 sentence personalized coaching note for each athlete who ran that week.
+- **Multi-Message Splitting** — Recap entries are packed into Discord messages up to 1900 characters each to avoid hitting the 2000-char limit.
+
 ### AI Running Coach (Gemini)
 
 - **Natural Language Chat** (`/ai`) — Conversational Gemini agent with tool-calling. Dynamically fetches run data to answer questions about training, pace, comparisons, and PRs.
@@ -48,6 +59,7 @@ Deferred commands return an immediate Type 5 acknowledgement to Discord (within 
 - **Global Rate Limiting** — Token-bucket limiter stored in DynamoDB, applied to all intensive commands. Max 5 tokens per user, 1 token refilled every 30 seconds. Rate-limited users receive an ephemeral Discord warning.
 - **Discord Signature Verification** — All incoming Discord webhook requests are verified with Ed25519 cryptographic signature validation using `tweetnacl`.
 - **SQS Retry with DLQ** — All background jobs are retried up to 5 times automatically before landing in a Dead Letter Queue.
+- **EventBridge Scheduler** — Automated weekly recap fires every Sunday via AWS EventBridge Scheduler with a flexible 5-minute window.
 - **`GET /health` Endpoint** — Returns `{"status":"ok"}` for uptime monitoring and post-deploy health checks.
 
 ---
@@ -55,10 +67,11 @@ Deferred commands return an immediate Type 5 acknowledgement to Discord (within 
 ## Stack
 
 - Node.js 22 + TypeScript
-- AWS Lambda (2 functions: `api` gateway + `strava-worker`)
+- AWS Lambda (3 functions: `api` gateway, `strava-worker`, `weekly-recap`)
 - API Gateway HTTP API
 - Amazon SQS (webhook retry + deferred slash commands)
 - Amazon DynamoDB (activities, personal records, rate limiting)
+- AWS EventBridge Scheduler (weekly recap trigger)
 - Gemini API (`gemini-2.5-flash`) for run analysis and AI coaching
 - Terraform
 

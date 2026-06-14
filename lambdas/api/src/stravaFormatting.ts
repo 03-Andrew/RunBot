@@ -2,7 +2,7 @@ import { StravaActivity, ClubActivity } from "./stravaApi";
 
 const MANILA_UTC_OFFSET_MINUTES = 8 * 60;
 
-type WeeklyStats = {
+export type WeeklyStats = {
   distanceMeters: number;
   runCount: number;
   movingTimeSeconds: number;
@@ -177,16 +177,16 @@ export const getActivityTimestamp = (activity: StravaActivity) => {
   return Number.isNaN(ts) ? 0 : ts;
 };
 
-const isWithinCurrentWeek = (activity: StravaActivity) => {
-  const ts = getActivityTimestamp(activity);
-  if (ts === 0) return false;
-  const weekStart = getCurrentWeekStartUnixSeconds() * 1000;
-  return ts >= weekStart;
-};
-
-export const calculateWeeklyStats = (activities: StravaActivity[]): WeeklyStats => {
+export const calculateWeeklyStats = (
+  activities: StravaActivity[],
+  weekStartUnixSeconds?: number
+): WeeklyStats => {
+  const weekStart = (weekStartUnixSeconds ?? getCurrentWeekStartUnixSeconds()) * 1000;
   return activities
-    .filter(isWithinCurrentWeek)
+    .filter((activity) => {
+      const ts = getActivityTimestamp(activity);
+      return ts !== 0 && ts >= weekStart;
+    })
     .reduce<WeeklyStats>(
       (stats, activity) => {
         if (!isRunningActivity(activity)) {

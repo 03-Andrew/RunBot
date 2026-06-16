@@ -2,7 +2,7 @@ import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { db } from "../storage";
 import { htmlResponse, textResponse } from "../http";
-import { postDiscordMessage, sendDiscordDM } from "../discord";
+import { postDiscordMessage, resolveStateNonce, sendDiscordDM } from "../discord";
 import { stravaConnectedPage } from "./stravaConnectedPage";
 
 declare const process: {
@@ -21,10 +21,15 @@ export const handleStravaCallback = async (event: {
   queryStringParameters?: Record<string, string | undefined> | null;
 }) => {
   const code = event.queryStringParameters?.code;
-  const discordId = event.queryStringParameters?.state;
+  const stateNonce = event.queryStringParameters?.state;
 
-  if (!code || !discordId) {
+  if (!code || !stateNonce) {
     return textResponse(400, "Missing Strava authorization code or state.");
+  }
+
+  const discordId = await resolveStateNonce(stateNonce);
+  if (!discordId) {
+    return textResponse(400, "Invalid or expired state parameter. Please run /strava again.");
   }
 
   if (!process.env.STRAVA_CLIENT_ID || !process.env.STRAVA_CLIENT_SECRET) {

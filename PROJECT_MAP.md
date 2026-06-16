@@ -1,6 +1,6 @@
 # RunBot Project Map
 
-RunBot is a serverless AWS backend that connects Strava and Discord. It automatically posts activity notifications, tracks personal records, and provides an integrated Gemini-powered AI running coach — all triggered via Discord slash commands.
+RunBot is a serverless AWS backend that connects Strava and Discord. It automatically posts activity notifications, tracks personal records, and provides an integrated DeepSeek-powered AI running coach — all triggered via Discord slash commands.
 
 ## What lives where
 
@@ -21,7 +21,7 @@ Terraform for the AWS deployment.
 - `variables.tf`: input variables such as Discord and Strava secrets.
 - `main.tf`: the main infrastructure definition. It creates:
   - the HTTP Lambda function (`api`) — handles all public HTTP endpoints
-  - the SQS Worker Lambda function (`strava-worker`) — processes background jobs with integrated Gemini AI
+  - the SQS Worker Lambda function (`strava-worker`) — processes background jobs with integrated DeepSeek AI
   - the Weekly Recap Lambda function (`weekly-recap`) — automated Sunday recap via EventBridge Scheduler
   - API Gateway routes and integrations
   - the DynamoDB table (`ActivityBot`) with a GSI (`GSI1`) for Strava ID lookups
@@ -66,14 +66,14 @@ Application code for both the HTTP (`api`) and SQS Worker (`strava-worker`) Lamb
   - **`strava-backfill`** — Fetches up to 730 days of historical activities from Strava, saves them all to DynamoDB, and runs a full PR recalculation from scratch.
   - **`discord-slash-command / stats`** — Fetches the current week's Strava activities and posts a weekly stats summary to Discord via follow-up webhook.
   - **`discord-slash-command / club-activities`** — Fetches the latest 30 activities from the configured Strava Club and posts the formatted list via follow-up webhook.
-  - **`discord-slash-command / analyse-run`** — Builds a run context payload (latest run, 5 recent runs, 10 historical runs, weekly summary) and calls `runRunAnalysis` from `agent.ts` to generate a Gemini coaching report.
+  - **`discord-slash-command / analyse-run`** — Builds a run context payload (latest run, 5 recent runs, 10 historical runs, weekly summary) and calls `runRunAnalysis` from `agent.ts` to generate a DeepSeek coaching report.
   - **`discord-slash-command / ai-chat`** — Calls `runNaturalLanguageAi` from `agent.ts` with the user's prompt for free-form AI coaching.
 
 ### AI Agent
 
 - `src/agent.ts`: Contains both AI execution engines:
-  - `runNaturalLanguageAi(prompt, discordUserId)` — Conversational Gemini agent with a multi-turn tool-calling loop (up to 4 iterations). Tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`.
-  - `runRunAnalysis(input)` — Single-pass Gemini call that builds a structured coaching report from a run context payload using a detailed prompt template.
+  - `runNaturalLanguageAi(prompt, discordUserId)` — Conversational DeepSeek agent with a multi-turn tool-calling loop (up to 4 iterations). Tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`.
+  - `runRunAnalysis(input)` — Single-pass DeepSeek call that builds a structured coaching report from a run context payload using a detailed prompt template.
 
 ### Shared helpers
 
@@ -111,8 +111,8 @@ POST /discord-interactions
             │
             ├── stats          → fetch Strava activities → post weekly stats to Discord
             ├── club-activities→ fetch club activities → post feed to Discord
-            ├── analyse-run    → build run context → Gemini analysis → post report to Discord
-            └── ai-chat        → Gemini tool-calling agent → post response to Discord
+            ├── analyse-run    → build run context → DeepSeek analysis → post report to Discord
+            └── ai-chat        → DeepSeek tool-calling agent → post response to Discord
 
 POST /strava/webhook (Strava event)
     │

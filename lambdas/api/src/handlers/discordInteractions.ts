@@ -164,7 +164,7 @@ export const handleDiscordInteractions = async (event: {
     return jsonResponse(200, {
       type: 4,
       data: {
-        content: `Connect Strava:\n${buildStravaAuthorizeUrl(discordUserId, clientId)}`,
+        content: `Connect Strava:\n${await buildStravaAuthorizeUrl(discordUserId, clientId)}`,
       },
     });
   }

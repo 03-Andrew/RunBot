@@ -1,3 +1,5 @@
+import { GetCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { db } from "./storage";
 import { getHeader, getRawBody } from "./http";
 
 declare const Buffer: any;
@@ -68,7 +70,25 @@ export const isValidDiscordRequest = (
 
 export const getRawDiscordBody = getRawBody;
 
-export const buildStravaAuthorizeUrl = (discordUserId: string, clientId: string) => {
+const STATE_TTL_SECONDS = 600; // 10 minutes
+
+export const buildStravaAuthorizeUrl = async (discordUserId: string, clientId: string) => {
+  const { randomBytes } = require("node:crypto");
+  const nonce = randomBytes(16).toString("hex");
+  const expiresAt = Math.floor(Date.now() / 1000) + STATE_TTL_SECONDS;
+
+  await db.send(
+    new PutCommand({
+      TableName: "ActivityBot",
+      Item: {
+        PK: `STATE#${nonce}`,
+        SK: "STATE",
+        discordUserId,
+        expiresAt,
+      },
+    })
+  );
+
   const redirect =
     "https://2i877vt1l9.execute-api.ap-southeast-1.amazonaws.com/strava/callback";
 
@@ -78,9 +98,33 @@ export const buildStravaAuthorizeUrl = (discordUserId: string, clientId: string)
   url.searchParams.set("redirect_uri", redirect);
   url.searchParams.set("approval_prompt", "force");
   url.searchParams.set("scope", "activity:read_all");
-  url.searchParams.set("state", discordUserId);
+  url.searchParams.set("state", nonce);
 
   return url.toString();
+};
+
+export const resolveStateNonce = async (nonce: string): Promise<string | null> => {
+  const result = await db.send(
+    new GetCommand({
+      TableName: "ActivityBot",
+      Key: { PK: `STATE#${nonce}`, SK: "STATE" },
+    })
+  );
+
+  if (!result.Item) return null;
+
+  const expiresAt = result.Item.expiresAt as number;
+  if (Date.now() / 1000 > expiresAt) return null;
+
+  // Consume the nonce so it can't be replayed
+  await db.send(
+    new DeleteCommand({
+      TableName: "ActivityBot",
+      Key: { PK: `STATE#${nonce}`, SK: "STATE" },
+    })
+  );
+
+  return result.Item.discordUserId as string;
 };
 
 export const postDiscordInteractionFollowUp = async (

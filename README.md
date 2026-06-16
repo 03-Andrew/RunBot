@@ -1,6 +1,6 @@
 # RunBot
 
-A serverless AWS backend for a Strava + Discord bot. RunBot connects users' Strava accounts to Discord, automatically posts activity notifications, tracks personal records, and provides an integrated Gemini-powered AI running coach.
+A serverless AWS backend for a Strava + Discord bot. RunBot connects users' Strava accounts to Discord, automatically posts activity notifications, tracks personal records, and provides an integrated DeepSeek-powered AI running coach.
 
 ## Features
 
@@ -12,7 +12,7 @@ A serverless AWS backend for a Strava + Discord bot. RunBot connects users' Stra
 | `/stats` | Post your weekly running stats — distance, runs, pace, longest run, total time | Deferred |
 | `/club-activities` | Post the latest 30 activities from the configured Strava Club | Deferred |
 | `/analyse run` | Generate an AI coaching report on your latest run (Summary, Trend, Risks, Next Steps) | Deferred |
-| `/ai <prompt>` | Chat with the Gemini AI running coach in natural language | Deferred |
+| `/ai <prompt>` | Chat with the DeepSeek AI running coach in natural language | Deferred |
 | `/help` | List all available commands | Instant |
 
 ### Automated Weekly Recap
@@ -46,11 +46,11 @@ Deferred commands return an immediate Type 5 acknowledgement to Discord (within 
 - **AI Coaching Insight** — DeepSeek generates a 1-2 sentence personalized coaching note for each athlete who ran that week.
 - **Multi-Message Splitting** — Recap entries are packed into Discord messages up to 1900 characters each to avoid hitting the 2000-char limit.
 
-### AI Running Coach (Gemini)
+### AI Running Coach (DeepSeek)
 
-- **Natural Language Chat** (`/ai`) — Conversational Gemini agent with tool-calling. Dynamically fetches run data to answer questions about training, pace, comparisons, and PRs.
+- **Natural Language Chat** (`/ai`) — Conversational DeepSeek agent with tool-calling. Dynamically fetches run data to answer questions about training, pace, comparisons, and PRs.
 - **Structured Run Analysis** (`/analyse run`) — Generates a markdown coaching report using the latest run, 5 recent runs, 10 historical runs, and weekly stats summary.
-- **Gemini Tools** — The agent can call 5 tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`.
+- **DeepSeek Tools** — The agent can call 5 tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`.
 - **Strava-aware Context** — Detects if a Strava account is linked and adjusts the system prompt accordingly.
 - **Tool Call Depth Limit** — Capped at 4 tool-call iterations to prevent runaway loops.
 
@@ -72,7 +72,7 @@ Deferred commands return an immediate Type 5 acknowledgement to Discord (within 
 - Amazon SQS (webhook retry + deferred slash commands)
 - Amazon DynamoDB (activities, personal records, rate limiting)
 - AWS EventBridge Scheduler (weekly recap trigger)
-- Gemini API (`gemini-2.5-flash`) for run analysis and AI coaching
+- DeepSeek API (`deepseek-chat`) for run analysis and AI coaching
 - Terraform
 
 ---
@@ -87,7 +87,7 @@ export AWS_SECRET_ACCESS_KEY=YOUR_SECRET
 export AWS_REGION=ap-southeast-1
 export TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
 export TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
-export TF_VAR_gemini_api_key=YOUR_GEMINI_API_KEY
+export TF_VAR_deepseek_api_key=YOUR_DEEPSEEK_API_KEY
 ```
 
 ---
@@ -140,7 +140,7 @@ Required GitHub Secrets:
 - `STRAVA_CLIENT_ID`
 - `STRAVA_CLIENT_SECRET`
 - `VERIFY_TOKEN`
-- `GEMINI_API_KEY`
+- `DEEPSEEK_API_KEY`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 

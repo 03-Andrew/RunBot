@@ -31,8 +31,3 @@ variable "discord_channel_id" {
 }
 
 
-variable "deepseek_api_key" {
-  type      = string
-  sensitive = true
-}
-

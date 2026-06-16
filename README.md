@@ -77,7 +77,15 @@ Deferred commands return an immediate Type 5 acknowledgement to Discord (within 
 
 ---
 
-## Environment
+```text
+AWS_ACCESS_KEY_ID=YOUR_KEY
+AWS_SECRET_ACCESS_KEY=YOUR_SECRET
+AWS_REGION=YOUR_REGION
+TF_VAR_discord_public_key=YOUR_DISCORD_APP_PUBLIC_KEY
+TF_VAR_discord_application_id=YOUR_DISCORD_APP_ID
+TF_VAR_ai_coach_token=YOUR_RANDOM_INTERNAL_TOKEN
+TF_VAR_gemini_api_key=YOUR_GEMINI_API_KEY
+```
 
 Terraform uses the standard AWS provider credential chain. Export credentials before applying:
 

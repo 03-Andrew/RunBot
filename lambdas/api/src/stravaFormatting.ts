@@ -2,7 +2,7 @@ import { StravaActivity, ClubActivity } from "./stravaApi";
 
 const MANILA_UTC_OFFSET_MINUTES = 8 * 60;
 
-type WeeklyStats = {
+export type WeeklyStats = {
   distanceMeters: number;
   runCount: number;
   movingTimeSeconds: number;
@@ -10,14 +10,14 @@ type WeeklyStats = {
   longestRunMeters: number;
 };
 
-const formatDistanceKm = (meters?: number) => {
+export const formatDistanceKm = (meters?: number) => {
   if (meters == null || Number.isNaN(meters)) {
     return "n/a";
   }
   return `${(meters / 1000).toFixed(1)} km`;
 };
 
-const formatDistanceKmWith2Decimals = (meters?: number) => {
+export const formatDistanceKmWith2Decimals = (meters?: number) => {
   if (meters == null || Number.isNaN(meters)) {
     return "n/a";
   }
@@ -26,14 +26,14 @@ const formatDistanceKmWith2Decimals = (meters?: number) => {
   return `${kilometers.toFixed(kilometers >= 10 ? 1 : 2)} km`;
 };
 
-const formatCompactDistanceKm = (meters: number) => {
+export const formatCompactDistanceKm = (meters: number) => {
   const kilometers = meters / 1000;
   const rounded = Number.isInteger(kilometers) ? kilometers.toFixed(0) : kilometers.toFixed(1);
 
   return `${rounded}km`;
 };
 
-const formatPacePerKm = (movingTimeSeconds: number, distanceMeters: number) => {
+export const formatPacePerKm = (movingTimeSeconds: number, distanceMeters: number) => {
   if (movingTimeSeconds <= 0 || distanceMeters <= 0) {
     return "n/a";
   }
@@ -45,7 +45,7 @@ const formatPacePerKm = (movingTimeSeconds: number, distanceMeters: number) => {
   return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
 };
 
-const formatPacePerKmWithSpace = (movingTime?: number, distanceMeters?: number) => {
+export const formatPacePerKmWithSpace = (movingTime?: number, distanceMeters?: number) => {
   if (!movingTime || !distanceMeters || distanceMeters <= 0) {
     return "n/a";
   }
@@ -57,14 +57,14 @@ const formatPacePerKmWithSpace = (movingTime?: number, distanceMeters?: number) 
   return `${minutes}:${String(seconds).padStart(2, "0")} /km`;
 };
 
-const formatTotalTime = (seconds: number) => {
+export const formatTotalTime = (seconds: number) => {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
 
   return `${hours}h ${minutes}m`;
 };
 
-const formatDuration = (seconds?: number) => {
+export const formatDuration = (seconds?: number) => {
   if (seconds == null || Number.isNaN(seconds)) {
     return "n/a";
   }
@@ -164,30 +164,29 @@ export const getCurrentWeekStartUnixSeconds = () => {
   return Math.floor((weekStartLocalMs - offsetMs) / 1000);
 };
 
-const isRunningActivity = (activity: StravaActivity) => {
+export const isRunningActivity = (activity: StravaActivity) => {
   const labels = [activity.type, activity.sport_type].filter(
     (label): label is string => typeof label === "string"
   );
   return labels.some((label) => /run/i.test(label));
 };
 
-const isWithinCurrentWeek = (activity: StravaActivity) => {
-  if (!activity.start_date) {
-    return false;
-  }
-
-  const startedAt = new Date(activity.start_date).getTime();
-  if (Number.isNaN(startedAt)) {
-    return false;
-  }
-
-  const weekStart = getCurrentWeekStartUnixSeconds() * 1000;
-  return startedAt >= weekStart;
+export const getActivityTimestamp = (activity: StravaActivity) => {
+  if (!activity.start_date) return 0;
+  const ts = new Date(activity.start_date).getTime();
+  return Number.isNaN(ts) ? 0 : ts;
 };
 
-export const calculateWeeklyStats = (activities: StravaActivity[]): WeeklyStats => {
+export const calculateWeeklyStats = (
+  activities: StravaActivity[],
+  weekStartUnixSeconds?: number
+): WeeklyStats => {
+  const weekStart = (weekStartUnixSeconds ?? getCurrentWeekStartUnixSeconds()) * 1000;
   return activities
-    .filter(isWithinCurrentWeek)
+    .filter((activity) => {
+      const ts = getActivityTimestamp(activity);
+      return ts !== 0 && ts >= weekStart;
+    })
     .reduce<WeeklyStats>(
       (stats, activity) => {
         if (!isRunningActivity(activity)) {

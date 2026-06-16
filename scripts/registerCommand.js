@@ -73,6 +73,10 @@ async function register(){
      ]
    },
    {
+     name:"prs",
+     description:"Show your personal records (fastest 5K, 10K, Half Marathon, longest run, biggest climb)"
+   },
+   {
      name:"help",
      description:"Show available commands"
    }

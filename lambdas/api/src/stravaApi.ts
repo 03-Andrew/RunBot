@@ -28,6 +28,36 @@ export type StravaActivity = {
   total_elevation_gain?: number;
 };
 
+export type ClubAthlete = {
+  resource_state?: number;
+  firstname?: string;
+  lastname?: string;
+};
+
+export type ClubActivity = {
+  athlete?: ClubAthlete;
+  name?: string;
+  distance?: number;
+  moving_time?: number;
+  elapsed_time?: number;
+  total_elevation_gain?: number;
+  type?: string;
+  sport_type?: string;
+  workout_type?: number | null;
+};
+
+export type Club = {
+  id: number;
+  name?: string;
+};
+
+export type StoredStravaActivityRecord = StravaActivity & {
+  PK: string;
+  SK: string;
+  DiscordID: string;
+  UpdatedAt: string;
+};
+
 declare const process: {
   env: {
     STRAVA_CLIENT_ID?: string;
@@ -132,7 +162,7 @@ export const getLinkedStravaUserByDiscordId = async (discordUserId: string) => {
 export const getStoredStravaActivitiesByDiscordId = async (
   discordUserId: string
 ) => {
-  const items: StravaActivity[] = [];
+  const items: StoredStravaActivityRecord[] = [];
   let lastEvaluatedKey: Record<string, unknown> | undefined;
 
   do {
@@ -148,7 +178,7 @@ export const getStoredStravaActivitiesByDiscordId = async (
       })
     );
 
-    items.push(...((result.Items as StravaActivity[] | undefined) ?? []));
+    items.push(...((result.Items as StoredStravaActivityRecord[] | undefined) ?? []));
     lastEvaluatedKey = result.LastEvaluatedKey as Record<string, unknown> | undefined;
   } while (lastEvaluatedKey);
 
@@ -167,6 +197,56 @@ export const getStoredPersonalRecordsByDiscordId = async (discordUserId: string)
   );
 
   return result.Item as { personalRecords?: Record<string, StravaActivity> } | undefined;
+};
+
+export const sanitizeForDynamoDB = <T>(obj: T): T => {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === "number") {
+    if (obj > Number.MAX_SAFE_INTEGER || obj < Number.MIN_SAFE_INTEGER) {
+      return String(obj) as unknown as T;
+    }
+    return obj;
+  }
+  if (Array.isArray(obj)) return obj.map(sanitizeForDynamoDB) as unknown as T;
+  if (typeof obj === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      sanitized[k] = sanitizeForDynamoDB(v);
+    }
+    return sanitized as T;
+  }
+  return obj;
+};
+
+export const fetchStravaActivity = async (
+  user: StravaUserRecord,
+  activityId: number
+) => {
+  const accessToken = await getStravaAccessToken(user);
+
+  const fetchActivity = async (token: string) => {
+    const response = await fetch(`${STRAVA_API_BASE}/activities/${activityId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    return response;
+  };
+
+  let response = await fetchActivity(accessToken);
+
+  if (response.status === 401) {
+    const refreshed = await refreshStravaTokens(user);
+    response = await fetchActivity(refreshed.access_token);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to fetch Strava activity: ${response.status} ${errorBody}`);
+  }
+
+  return (await response.json()) as StravaActivity;
 };
 
 export const fetchStravaActivitiesSince = async (
@@ -216,4 +296,67 @@ export const fetchStravaActivitiesSince = async (
   }
 
   return allActivities;
+};
+
+export const getClubActivitiesById = async (
+  user: StravaUserRecord,
+  clubId: string,
+  page = 1,
+  perPage = 30
+) => {
+  const accessToken = await getStravaAccessToken(user);
+
+  const fetchClubActivities = async (token: string) => {
+    const url = new URL(`${STRAVA_API_BASE}/clubs/${clubId}/activities`);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(perPage));
+
+    return fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  };
+
+  let response = await fetchClubActivities(accessToken);
+
+  if (response.status === 401) {
+    const refreshed = await refreshStravaTokens(user);
+    response = await fetchClubActivities(refreshed.access_token);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(
+      `Failed to fetch Strava club activities: ${response.status} ${errorBody}`
+    );
+  }
+
+  return (await response.json()) as ClubActivity[];
+};
+
+export const getClubById = async (user: StravaUserRecord, clubId: string) => {
+  const accessToken = await getStravaAccessToken(user);
+
+  const fetchClub = async (token: string) => {
+    return fetch(`${STRAVA_API_BASE}/clubs/${clubId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  };
+
+  let response = await fetchClub(accessToken);
+
+  if (response.status === 401) {
+    const refreshed = await refreshStravaTokens(user);
+    response = await fetchClub(refreshed.access_token);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Failed to fetch Strava club: ${response.status} ${errorBody}`);
+  }
+
+  return (await response.json()) as Club;
 };

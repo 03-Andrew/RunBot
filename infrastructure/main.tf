@@ -2,25 +2,21 @@
 # Package Lambda
 ################################
 
-data "archive_file" "health_zip" {
+data "archive_file" "api_zip" {
   type        = "zip"
-  source_dir  = "../lambdas/health/dist"
-  output_path = "../lambdas/health/function.zip"
+  source_dir  = "../lambdas/api/dist"
+  output_path = "../lambdas/api/function.zip"
 }
 
-data "archive_file" "ai_zip" {
-  type        = "zip"
-  source_dir  = "../lambdas/aiAnalysis/dist"
-  output_path = "../lambdas/aiAnalysis/function.zip"
-}
+# Archive file for ai_zip removed.
 
 
 ################################
 # IAM Role
 ################################
 
-resource "aws_iam_role" "lambda_role" {
-  name = "health-lambda-role"
+resource "aws_iam_role" "api_lambda_role" {
+  name = "api-lambda-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -35,9 +31,29 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
+resource "aws_iam_role" "worker_lambda_role" {
+  name = "worker-lambda-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
 
-resource "aws_iam_role_policy_attachment" "basic" {
-  role       = aws_iam_role.lambda_role.name
+resource "aws_iam_role_policy_attachment" "api_basic" {
+  role       = aws_iam_role.api_lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "worker_basic" {
+  role       = aws_iam_role.worker_lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
@@ -65,13 +81,13 @@ resource "aws_sqs_queue" "strava_webhook_queue" {
 # Lambda
 ################################
 
-resource "aws_lambda_function" "health" {
-  function_name    = "health"
-  role             = aws_iam_role.lambda_role.arn
+resource "aws_lambda_function" "api" {
+  function_name    = "api"
+  role             = aws_iam_role.api_lambda_role.arn
   runtime          = "nodejs22.x"
   handler          = "index.handler"
-  filename         = data.archive_file.health_zip.output_path
-  source_code_hash = data.archive_file.health_zip.output_base64sha256
+  filename         = data.archive_file.api_zip.output_path
+  source_code_hash = data.archive_file.api_zip.output_base64sha256
   timeout          = 15
   environment {
     variables = {
@@ -85,17 +101,17 @@ resource "aws_lambda_function" "health" {
     }
   }
   depends_on = [
-    aws_iam_role_policy_attachment.basic
+    aws_iam_role_policy_attachment.api_basic
   ]
 }
 
 resource "aws_lambda_function" "strava_worker" {
   function_name    = "strava-worker"
-  role             = aws_iam_role.lambda_role.arn
+  role             = aws_iam_role.worker_lambda_role.arn
   runtime          = "nodejs22.x"
   handler          = "worker.handler"
-  filename         = data.archive_file.health_zip.output_path
-  source_code_hash = data.archive_file.health_zip.output_base64sha256
+  filename         = data.archive_file.api_zip.output_path
+  source_code_hash = data.archive_file.api_zip.output_base64sha256
   timeout          = 60
   environment {
     variables = {
@@ -104,39 +120,15 @@ resource "aws_lambda_function" "strava_worker" {
       DISCORD_APPLICATION_ID = var.discord_application_id
       DISCORD_BOT_TOKEN      = var.discord_bot_token
       DISCORD_CHANNEL_ID     = var.discord_channel_id
-      AI_COACH_URL           = "${aws_apigatewayv2_stage.dev.invoke_url}/ai-coach"
-      AI_COACH_TOKEN         = var.ai_coach_token
-      GEMINI_API_KEY         = var.gemini_api_key
+      DEEPSEEK_API_KEY        = var.deepseek_api_key
     }
   }
   depends_on = [
-    aws_iam_role_policy_attachment.basic
+    aws_iam_role_policy_attachment.worker_basic
   ]
 }
 
-resource "aws_lambda_function" "ai_worker" {
-  function_name    = "ai-worker"
-  role             = aws_iam_role.lambda_role.arn
-  runtime          = "nodejs22.x"
-  handler          = "index.handler"
-  filename         = data.archive_file.ai_zip.output_path
-  source_code_hash = data.archive_file.ai_zip.output_base64sha256
-  timeout          = 60
-  environment {
-    variables = {
-      GEMINI_API_KEY       = var.gemini_api_key
-      AI_COACH_TOKEN       = var.ai_coach_token
-      STRAVA_CLIENT_ID     = var.strava_client_id
-      STRAVA_CLIENT_SECRET = var.strava_client_secret
-      DISCORD_BOT_TOKEN    = var.discord_bot_token
-      DISCORD_CHANNEL_ID   = var.discord_channel_id
-    }
-  }
-  depends_on = [
-    aws_iam_role_policy_attachment.basic
-  ]
-
-}
+# ai_worker Lambda resource removed.
 
 
 ################################
@@ -153,19 +145,14 @@ resource "aws_apigatewayv2_api" "api" {
 # Lambda Integration
 ################################
 
-resource "aws_apigatewayv2_integration" "health" {
+resource "aws_apigatewayv2_integration" "api" {
   api_id                 = aws_apigatewayv2_api.api.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.health.invoke_arn
+  integration_uri        = aws_lambda_function.api.invoke_arn
   payload_format_version = "2.0"
 }
 
-resource "aws_apigatewayv2_integration" "ai_coach" {
-  api_id                 = aws_apigatewayv2_api.api.id
-  integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.ai_worker.invoke_arn
-  payload_format_version = "2.0"
-}
+# ai_coach API Gateway integration removed.
 
 
 ################################
@@ -175,20 +162,16 @@ resource "aws_apigatewayv2_integration" "ai_coach" {
 resource "aws_apigatewayv2_route" "health" {
   api_id    = aws_apigatewayv2_api.api.id
   route_key = "GET /health"
-  target    = "integrations/${aws_apigatewayv2_integration.health.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
 resource "aws_apigatewayv2_route" "discord" {
   api_id    = aws_apigatewayv2_api.api.id
   route_key = "POST /discord-interactions"
-  target    = "integrations/${aws_apigatewayv2_integration.health.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
-resource "aws_apigatewayv2_route" "ai_coach" {
-  api_id    = aws_apigatewayv2_api.api.id
-  route_key = "POST /ai-coach"
-  target    = "integrations/${aws_apigatewayv2_integration.ai_coach.id}"
-}
+# ai_coach API Gateway route removed.
 
 ################################
 # Strava OAuth Callback
@@ -197,7 +180,7 @@ resource "aws_apigatewayv2_route" "ai_coach" {
 resource "aws_apigatewayv2_route" "strava_callback" {
   api_id    = aws_apigatewayv2_api.api.id
   route_key = "GET /strava/callback"
-  target    = "integrations/${aws_apigatewayv2_integration.health.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 resource "aws_apigatewayv2_route" "strava_verify" {
 
@@ -205,14 +188,14 @@ resource "aws_apigatewayv2_route" "strava_verify" {
 
   api_id = aws_apigatewayv2_api.api.id
 
-  target = "integrations/${aws_apigatewayv2_integration.health.id}"
+  target = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
 
 resource "aws_apigatewayv2_route" "strava_event" {
   route_key = "POST /strava/webhook"
   api_id    = aws_apigatewayv2_api.api.id
-  target    = "integrations/${aws_apigatewayv2_integration.health.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
 ################################
@@ -233,18 +216,12 @@ resource "aws_apigatewayv2_stage" "dev" {
 resource "aws_lambda_permission" "api" {
   statement_id  = "AllowExecution"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.health.function_name
+  function_name = aws_lambda_function.api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }
 
-resource "aws_lambda_permission" "ai_api" {
-  statement_id  = "AllowExecutionAi"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.ai_worker.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
-}
+# ai_api Lambda permission removed.
 
 resource "aws_lambda_event_source_mapping" "strava_webhook_queue" {
   event_source_arn = aws_sqs_queue.strava_webhook_queue.arn
@@ -252,25 +229,20 @@ resource "aws_lambda_event_source_mapping" "strava_webhook_queue" {
   batch_size       = 1
 }
 
-resource "aws_iam_role_policy" "dynamo" {
-
-  role = aws_iam_role.lambda_role.id
+resource "aws_iam_role_policy" "api_dynamo" {
+  role = aws_iam_role.api_lambda_role.id
 
   policy = jsonencode({
-
     Version = "2012-10-17"
-
     Statement = [{
-
       Effect = "Allow"
-
       Action = [
         "dynamodb:PutItem",
         "dynamodb:GetItem",
+        "dynamodb:DeleteItem",
         "dynamodb:Query",
         "dynamodb:UpdateItem"
       ]
-
       Resource = [
         aws_dynamodb_table.activitybot.arn,
         "${aws_dynamodb_table.activitybot.arn}/index/*"
@@ -279,23 +251,19 @@ resource "aws_iam_role_policy" "dynamo" {
   })
 }
 
-resource "aws_iam_role_policy" "ai_dynamo" {
-  role = aws_iam_role.lambda_role.id
+resource "aws_iam_role_policy" "worker_dynamo" {
+  role = aws_iam_role.worker_lambda_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-
     Statement = [{
-
       Effect = "Allow"
-
       Action = [
         "dynamodb:PutItem",
         "dynamodb:GetItem",
         "dynamodb:Query",
         "dynamodb:UpdateItem"
       ]
-
       Resource = [
         aws_dynamodb_table.activitybot.arn,
         "${aws_dynamodb_table.activitybot.arn}/index/*"
@@ -305,7 +273,7 @@ resource "aws_iam_role_policy" "ai_dynamo" {
 }
 
 resource "aws_iam_role_policy" "sqs_producer" {
-  role = aws_iam_role.lambda_role.id
+  role = aws_iam_role.api_lambda_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -319,8 +287,40 @@ resource "aws_iam_role_policy" "sqs_producer" {
   })
 }
 
+resource "aws_iam_role_policy" "api_kms" {
+  role = aws_iam_role.api_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt",
+        "kms:CreateGrant"
+      ]
+      Resource = "arn:aws:kms:ap-southeast-1:942114769797:alias/aws/lambda"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "worker_kms" {
+  role = aws_iam_role.worker_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "kms:Decrypt",
+        "kms:CreateGrant"
+      ]
+      Resource = "arn:aws:kms:ap-southeast-1:942114769797:alias/aws/lambda"
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "sqs_consumer" {
-  role = aws_iam_role.lambda_role.id
+  role = aws_iam_role.worker_lambda_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -335,6 +335,111 @@ resource "aws_iam_role_policy" "sqs_consumer" {
       Resource = aws_sqs_queue.strava_webhook_queue.arn
     }]
   })
+}
+
+################################
+# Weekly Recap Lambda + Scheduler
+################################
+
+resource "aws_iam_role" "weekly_recap_lambda_role" {
+  name = "weekly-recap-lambda-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "weekly_recap_basic" {
+  role       = aws_iam_role.weekly_recap_lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "weekly_recap_dynamo" {
+  role = aws_iam_role.weekly_recap_lambda_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ]
+      Resource = [
+        aws_dynamodb_table.activitybot.arn,
+        "${aws_dynamodb_table.activitybot.arn}/index/*"
+      ]
+    }]
+  })
+}
+
+resource "aws_lambda_function" "weekly_recap" {
+  function_name    = "weekly-recap"
+  role             = aws_iam_role.weekly_recap_lambda_role.arn
+  runtime          = "nodejs22.x"
+  handler          = "weeklyRecap.handler"
+  filename         = data.archive_file.api_zip.output_path
+  source_code_hash = data.archive_file.api_zip.output_base64sha256
+  timeout          = 180
+  environment {
+    variables = {
+      DISCORD_BOT_TOKEN  = var.discord_bot_token
+      DISCORD_CHANNEL_ID = var.discord_channel_id
+      DEEPSEEK_API_KEY    = var.deepseek_api_key
+    }
+  }
+  depends_on = [
+    aws_iam_role_policy_attachment.weekly_recap_basic
+  ]
+}
+
+resource "aws_iam_role" "weekly_recap_scheduler_role" {
+  name = "weekly-recap-scheduler-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "weekly_recap_scheduler" {
+  role = aws_iam_role.weekly_recap_scheduler_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.weekly_recap.arn
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "weekly_recap" {
+  name = "weekly-recap"
+  flexible_time_window {
+    mode                      = "FLEXIBLE"
+    maximum_window_in_minutes = 5
+  }
+  schedule_expression = "cron(0 16 ? * 7 *)"
+  target {
+    arn      = aws_lambda_function.weekly_recap.arn
+    role_arn = aws_iam_role.weekly_recap_scheduler_role.arn
+  }
+}
+
+resource "aws_lambda_permission" "weekly_recap" {
+  statement_id  = "AllowSchedulerInvocation"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.weekly_recap.function_name
+  principal     = "scheduler.amazonaws.com"
+  source_arn    = aws_scheduler_schedule.weekly_recap.arn
 }
 
 ################################

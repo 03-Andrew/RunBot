@@ -30,7 +30,7 @@ if (!process.env.AWS_REGION && process.env.AWS_DEFAULT_REGION) {
 }
 
 // 2. Load the Lambda handler
-const lambdaDistPath = path.join(__dirname, '../lambdas/health/dist/index.js');
+const lambdaDistPath = path.join(__dirname, '../lambdas/api/dist/index.js');
 if (!fs.existsSync(lambdaDistPath)) {
   console.error(`Error: Compiled lambda not found at ${lambdaDistPath}`);
   console.error('Please run "npm run build" first to compile TypeScript.');

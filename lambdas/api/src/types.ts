@@ -13,7 +13,7 @@ export type ApiGatewayEvent = {
 
 export type DiscordSlashCommandJob = {
   kind: "discord-slash-command";
-  commandName: "stats" | "club-activities" | "analyse-run" | "ai-chat";
+  commandName: "stats" | "club-activities" | "analyse-run" | "ai-chat" | "prs";
   interactionToken: string;
   discordUserId: string;
   prompt?: string;
@@ -33,7 +33,8 @@ export const isDiscordSlashCommandJob = (
     (job.commandName === "stats" ||
       job.commandName === "club-activities" ||
       job.commandName === "analyse-run" ||
-      job.commandName === "ai-chat") &&
+      job.commandName === "ai-chat" ||
+      job.commandName === "prs") &&
     typeof job.interactionToken === "string" &&
     job.interactionToken.length > 0 &&
     typeof job.discordUserId === "string" &&

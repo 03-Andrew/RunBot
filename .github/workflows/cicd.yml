@@ -33,26 +33,18 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            lambdas/health/package-lock.json
+            lambdas/api/package-lock.json
 
       - name: Install Lambda dependencies
-        working-directory: lambdas/health
+        working-directory: lambdas/api
         run: npm ci
 
       - name: Type check Lambda
-        working-directory: lambdas/health
+        working-directory: lambdas/api
         run: npx tsc -p tsconfig.json
 
       - name: Build Lambda bundle
-        working-directory: lambdas/health
-        run: npm run build
-
-      - name: Install AI Lambda dependencies
-        working-directory: lambdas/aiAnalysis
-        run: npm ci
-
-      - name: Build AI Lambda bundle
-        working-directory: lambdas/aiAnalysis
+        working-directory: lambdas/api
         run: npm run build
 
       - name: Register Discord commands

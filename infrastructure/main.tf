@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 ################################
 # Package Lambda
 ################################
@@ -298,7 +300,7 @@ resource "aws_iam_role_policy" "api_kms" {
         "kms:Decrypt",
         "kms:CreateGrant"
       ]
-      Resource = "arn:aws:kms:ap-southeast-1:942114769797:alias/aws/lambda"
+      Resource = "arn:aws:kms:ap-southeast-1:${data.aws_caller_identity.current.account_id}:alias/aws/lambda"
     }]
   })
 }
@@ -314,7 +316,7 @@ resource "aws_iam_role_policy" "worker_kms" {
         "kms:Decrypt",
         "kms:CreateGrant"
       ]
-      Resource = "arn:aws:kms:ap-southeast-1:942114769797:alias/aws/lambda"
+      Resource = "arn:aws:kms:ap-southeast-1:${data.aws_caller_identity.current.account_id}:alias/aws/lambda"
     }]
   })
 }

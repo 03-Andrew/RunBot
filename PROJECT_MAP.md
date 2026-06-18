@@ -54,10 +54,11 @@ Application code for both the HTTP (`api`) and SQS Worker (`strava-worker`) Lamb
 
 - `src/handlers/discordInteractions.ts`: Validates Discord Ed25519 request signatures, enforces the global DynamoDB token-bucket rate limiter, and handles all slash commands:
   - `/strava` — returns a Strava OAuth authorization URL immediately.
-  - `/stats`, `/club-activities`, `/analyse run`, `/ai` — enqueues SQS jobs and returns a Type 5 deferred response.
+  - `/stats`, `/club-activities`, `/analyse run`, `/ai`, `/prs` — enqueues SQS jobs and returns a Type 5 deferred response.
   - `/help` — returns the list of available commands immediately.
 - `src/handlers/stravaWebhook.ts`: Handles `GET /strava/webhook` (webhook challenge verification) and `POST /strava/webhook` (enqueues a new `strava-webhook` SQS job).
 - `src/handlers/stravaCallback.ts`: Handles `GET /strava/callback`. Exchanges the Strava authorization code for tokens, stores the user profile in DynamoDB, sends a welcome DM and channel notification to Discord, queues a 730-day historical activity backfill job, and renders a branded HTML confirmation page.
+- `src/handlers/stravaConnectedPage.ts`: Static HTML confirmation page returned after successful Strava OAuth connection.
 
 ### SQS Worker (strava-worker Lambda)
 
@@ -66,14 +67,21 @@ Application code for both the HTTP (`api`) and SQS Worker (`strava-worker`) Lamb
   - **`strava-backfill`** — Fetches up to 730 days of historical activities from Strava, saves them all to DynamoDB, and runs a full PR recalculation from scratch.
   - **`discord-slash-command / stats`** — Fetches the current week's Strava activities and posts a weekly stats summary to Discord via follow-up webhook.
   - **`discord-slash-command / club-activities`** — Fetches the latest 30 activities from the configured Strava Club and posts the formatted list via follow-up webhook.
-  - **`discord-slash-command / analyse-run`** — Builds a run context payload (latest run, 5 recent runs, 10 historical runs, weekly summary) and calls `runRunAnalysis` from `agent.ts` to generate a DeepSeek coaching report.
-  - **`discord-slash-command / ai-chat`** — Calls `runNaturalLanguageAi` from `agent.ts` with the user's prompt for free-form AI coaching.
+  - **`discord-slash-command / analyse-run`** — Builds a run context payload (latest run, 5 recent runs, 10 historical runs, weekly summary) and calls `runRunAnalysis` from `src/ai/runAnalysis.ts` to generate a DeepSeek coaching report.
+  - **`discord-slash-command / ai-chat`** — Calls `runNaturalLanguageAi` from `src/ai/agent.ts` with the user's prompt for free-form AI coaching.
+  - **`discord-slash-command / prs`** — Reads pre-computed personal records from DynamoDB and posts a formatted PR card via follow-up webhook.
 
-### AI Agent
+### AI (`src/ai/`)
 
-- `src/agent.ts`: Contains both AI execution engines:
+- `src/ai/agent.ts`: Contains both AI execution engines:
   - `runNaturalLanguageAi(prompt, discordUserId)` — Conversational DeepSeek agent with a multi-turn tool-calling loop (up to 4 iterations). Tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`.
   - `runRunAnalysis(input)` — Single-pass DeepSeek call that builds a structured coaching report from a run context payload using a detailed prompt template.
+- `src/ai/deepseek.ts`: DeepSeek API client. Calls `https://api.deepseek.com/v1/chat/completions` with tool definitions, handles responses.
+- `src/ai/tools.ts`: Tool definitions (5 tools) and `executeTool` dispatcher. Tools: `get_latest_run`, `get_recent_runs`, `get_weekly_stats`, `compare_to_past_runs`, `get_personal_records`. On-the-fly PR fallback if pre-computed record is missing.
+- `src/ai/run-data.ts`: Shared helpers for AI tools — `loadRunHistory`, `summarizeRun`, `dedupeAndSortRuns`, plus PR threshold constants.
+- `src/ai/runAnalysis.ts`: Builds and sends structured run analysis prompt to DeepSeek for `/analyse run`.
+- `src/ai/conversation.ts`: Loads/saves multi-turn conversation history from DynamoDB (10-turn cap).
+- `src/ai/types.ts`: Type definitions for AI agent — messages, tool calls, agent context, analysis input.
 
 ### Shared helpers
 
@@ -82,7 +90,6 @@ Application code for both the HTTP (`api`) and SQS Worker (`strava-worker`) Lamb
 - `src/discord.ts`: Ed25519 request signature validator, Strava OAuth URL builder, `postDiscordMessage`, `postDiscordInteractionFollowUp`, and `sendDiscordDM`.
 - `src/stravaApi.ts`: Strava API client. Handles OAuth token refresh, fetches individual activities, paginated activity lists, club activities, and queries the DynamoDB user and activity stores.
 - `src/stravaFormatting.ts`: Stats compilation (`calculateWeeklyStats`, `getCurrentWeekStartUnixSeconds`), Discord message formatters for activities (`buildStravaActivityMessage`), weekly stats (`buildWeeklyStatsMessage`), and club feeds (`buildClubActivitiesMessageForClub`).
-- `src/weeklyRecap.ts`: Weekly recap handler. Scans all `USER#` profiles via DynamoDB Scan, fetches each athlete's current-week activities, computes stats via `calculateWeeklyStats`, calls DeepSeek for 1-2 sentence AI coaching insight per athlete, and posts multi-message recap to Discord.
 - `src/types.ts`: Central TypeScript type definitions and runtime type-guards for `DiscordSlashCommandJob`, `StravaWebhookJob`, `StravaBackfillJob`, and `ApiGatewayEvent`.
 
 ---
@@ -101,7 +108,7 @@ POST /discord-interactions
     ├── /strava → return OAuth URL (instant)
     ├── /help   → return command list (instant)
     │
-    └── /stats, /club-activities, /analyse run, /ai
+    └── /stats, /club-activities, /analyse run, /ai, /prs
             │
             ▼
         SQS Queue (strava-webhook-queue)
@@ -112,7 +119,8 @@ POST /discord-interactions
             ├── stats          → fetch Strava activities → post weekly stats to Discord
             ├── club-activities→ fetch club activities → post feed to Discord
             ├── analyse-run    → build run context → DeepSeek analysis → post report to Discord
-            └── ai-chat        → DeepSeek tool-calling agent → post response to Discord
+            ├── ai-chat        → DeepSeek tool-calling agent → post response to Discord
+            └── prs            → read pre-computed PRs from DynamoDB → post PR card to Discord
 
 POST /strava/webhook (Strava event)
     │
@@ -168,6 +176,7 @@ One table: `ActivityBot`. One GSI: `GSI1` for querying users by Strava athlete I
 - `npm --prefix lambdas/api run build` — compiles TypeScript and copies prod dependencies into `dist/`.
 - `node scripts/registerCommand.js` — registers Discord slash commands via the Discord API.
 - `node scripts/serve-local.js` — runs a local mock API Gateway server on `http://localhost:3000`.
+- `node scripts/ddb.js` — CLI for direct DynamoDB table inspection (get/query/scan/put/update).
 - `node scripts/test-strava.js` — interactive CLI for testing Strava API token exchanges and activity lookups.
 - `terraform -chdir=infrastructure apply` — deploys AWS infrastructure.
 - `terraform -chdir=infrastructure/bootstrap apply` — creates the remote Terraform state backend.

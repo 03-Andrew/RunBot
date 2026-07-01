@@ -1,4 +1,5 @@
 import type { StravaActivity, StravaUserRecord } from "../stravaApi";
+import type { Logger } from "../logger";
 
 export type Message = {
   role: "system" | "user" | "assistant" | "tool";
@@ -68,6 +69,7 @@ export type AgentContext = {
   discordUserId: string;
   linkedStravaUser?: StravaUserRecord;
   cachedActivities?: StravaActivity[];
+  log: Logger;
 };
 
 export type ConversationEntry = { role: "user" | "assistant"; content: string };

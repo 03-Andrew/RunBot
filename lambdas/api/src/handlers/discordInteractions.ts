@@ -4,6 +4,7 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { db } from "../storage";
 import type { DiscordSlashCommandJob } from "../types";
+import { type Logger, noopLogger } from "../logger";
 
 const sqs = new SQSClient({});
 
@@ -27,9 +28,12 @@ const getStringOptionValue = (
 };
 
 const LIMIT_MAX_TOKENS = 5;
-const LIMIT_REFILL_RATE_SECONDS = 30; // 1 token refilled every 30 seconds
+const LIMIT_REFILL_RATE_SECONDS = 30;
 
-const checkRateLimit = async (discordUserId: string): Promise<{ allowed: boolean; waitSeconds: number }> => {
+const checkRateLimit = async (
+  discordUserId: string,
+  log: Logger
+): Promise<{ allowed: boolean; waitSeconds: number }> => {
   try {
     const result = await db.send(
       new GetCommand({
@@ -79,18 +83,21 @@ const checkRateLimit = async (discordUserId: string): Promise<{ allowed: boolean
     const waitSeconds = LIMIT_REFILL_RATE_SECONDS - (now - lastRefill);
     return { allowed: false, waitSeconds };
   } catch (error: any) {
-    console.error("Rate limit check failed, defaulting to allowed:", error.message);
+    log.error("Rate limit check failed, defaulting to allowed", { error: error.message });
     return { allowed: true, waitSeconds: 0 };
   }
 };
 
-export const handleDiscordInteractions = async (event: {
-  headers?: Record<string, string | undefined>;
-  body?: string | null;
-  isBase64Encoded?: boolean;
-  member?: { user?: { id?: string } };
-  user?: { id?: string };
-}) => {
+export const handleDiscordInteractions = async (
+  event: {
+    headers?: Record<string, string | undefined>;
+    body?: string | null;
+    isBase64Encoded?: boolean;
+    member?: { user?: { id?: string } };
+    user?: { id?: string };
+  },
+  log: Logger = noopLogger
+) => {
   const rawBody = getRawBody(event);
 
   if (!isValidDiscordRequest(event, rawBody)) {
@@ -118,23 +125,22 @@ export const handleDiscordInteractions = async (event: {
     return jsonResponse(200, { type: 1 });
   }
 
-  // Global Rate Limiting for intensive slash commands
   const discordUserId = body.member?.user?.id ?? body.user?.id;
   const commandName = body.data?.name;
   if (discordUserId && ["stats", "club-activities", "analyse", "ai"].includes(commandName)) {
     try {
-      const { allowed, waitSeconds } = await checkRateLimit(discordUserId);
+      const { allowed, waitSeconds } = await checkRateLimit(discordUserId, log);
       if (!allowed) {
         return jsonResponse(200, {
           type: 4,
           data: {
             content: `⚠️ **Rate Limited!** Please wait **${waitSeconds} seconds** before running this command again.`,
-            flags: 64, // Ephemeral: only visible to the user who ran the command
+            flags: 64,
           },
         });
       }
     } catch (err: any) {
-      console.error("Rate limiting check failed:", err.message);
+      log.error("Rate limiting check failed", { error: err.message });
     }
   }
 
@@ -174,7 +180,6 @@ export const handleDiscordInteractions = async (event: {
       type: 4,
       data: {
         content: helpMessage,
-        // flags: 64,
       },
     });
   }
@@ -203,7 +208,7 @@ export const handleDiscordInteractions = async (event: {
 
     const queueUrl = process.env.SQS_QUEUE_URL;
     if (!queueUrl) {
-      console.error("SQS queue is not configured");
+      log.error("SQS queue is not configured");
       return jsonResponse(200, {
         type: 4,
         data: {
@@ -228,20 +233,18 @@ export const handleDiscordInteractions = async (event: {
         })
       );
 
-      console.log("Queued Discord slash command job", {
+      log.info("Queued Discord slash command job", {
         commandName: "ai-chat",
         discordUserId,
         messageId: response.MessageId,
       });
 
-      return jsonResponse(200, {
-        type: 5,
-      });
+      return jsonResponse(200, { type: 5 });
     } catch (error) {
-      console.error("Failed to queue Discord slash command job", {
+      log.error("Failed to queue Discord slash command job", {
         commandName: "ai-chat",
         discordUserId,
-        error,
+        error: String(error),
       });
 
       return jsonResponse(200, {
@@ -267,7 +270,7 @@ export const handleDiscordInteractions = async (event: {
 
     const queueUrl = process.env.SQS_QUEUE_URL;
     if (!queueUrl) {
-      console.error("SQS queue is not configured");
+      log.error("SQS queue is not configured");
       return jsonResponse(200, {
         type: 4,
         data: {
@@ -291,20 +294,18 @@ export const handleDiscordInteractions = async (event: {
         })
       );
 
-      console.log("Queued Discord slash command job", {
+      log.info("Queued Discord slash command job", {
         commandName: "stats",
         discordUserId,
         messageId: response.MessageId,
       });
 
-      return jsonResponse(200, {
-        type: 5,
-      });
+      return jsonResponse(200, { type: 5 });
     } catch (error) {
-      console.error("Failed to queue Discord slash command job", {
+      log.error("Failed to queue Discord slash command job", {
         commandName: "stats",
         discordUserId,
-        error,
+        error: String(error),
       });
 
       return jsonResponse(200, {
@@ -330,7 +331,7 @@ export const handleDiscordInteractions = async (event: {
 
     const queueUrl = process.env.SQS_QUEUE_URL;
     if (!queueUrl) {
-      console.error("SQS queue is not configured");
+      log.error("SQS queue is not configured");
       return jsonResponse(200, {
         type: 4,
         data: {
@@ -354,20 +355,18 @@ export const handleDiscordInteractions = async (event: {
         })
       );
 
-      console.log("Queued Discord slash command job", {
+      log.info("Queued Discord slash command job", {
         commandName: "analyse-run",
         discordUserId,
         messageId: response.MessageId,
       });
 
-      return jsonResponse(200, {
-        type: 5,
-      });
+      return jsonResponse(200, { type: 5 });
     } catch (error) {
-      console.error("Failed to queue Discord slash command job", {
+      log.error("Failed to queue Discord slash command job", {
         commandName: "analyse-run",
         discordUserId,
-        error,
+        error: String(error),
       });
 
       return jsonResponse(200, {
@@ -393,7 +392,7 @@ export const handleDiscordInteractions = async (event: {
 
     const queueUrl = process.env.SQS_QUEUE_URL;
     if (!queueUrl) {
-      console.error("SQS queue is not configured");
+      log.error("SQS queue is not configured");
       return jsonResponse(200, {
         type: 4,
         data: {
@@ -417,20 +416,18 @@ export const handleDiscordInteractions = async (event: {
         })
       );
 
-      console.log("Queued Discord slash command job", {
+      log.info("Queued Discord slash command job", {
         commandName: "club-activities",
         discordUserId,
         messageId: response.MessageId,
       });
 
-      return jsonResponse(200, {
-        type: 5,
-      });
+      return jsonResponse(200, { type: 5 });
     } catch (error) {
-      console.error("Failed to queue Discord slash command job", {
+      log.error("Failed to queue Discord slash command job", {
         commandName: "club-activities",
         discordUserId,
-        error,
+        error: String(error),
       });
 
       return jsonResponse(200, {
@@ -472,7 +469,7 @@ export const handleDiscordInteractions = async (event: {
         new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(message) })
       );
 
-      console.log("Queued Discord slash command job", {
+      log.info("Queued Discord slash command job", {
         commandName: "prs",
         discordUserId,
         messageId: response.MessageId,
@@ -480,7 +477,7 @@ export const handleDiscordInteractions = async (event: {
 
       return jsonResponse(200, { type: 5 });
     } catch (error) {
-      console.error("Failed to queue prs job", { discordUserId, error });
+      log.error("Failed to queue prs job", { discordUserId, error: String(error) });
       return jsonResponse(200, {
         type: 4,
         data: { content: "Could not queue your PR request right now." },

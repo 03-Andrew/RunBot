@@ -1,6 +1,7 @@
 import { formatDistanceKmWith2Decimals, formatPacePerKmWithSpace } from "../stravaFormatting";
 import { callDeepSeek } from "./deepseek";
 import type { AnalysisInput, StravaActivityContext } from "./types";
+import { type Logger, noopLogger } from "../logger";
 
 const formatRunForAnalysis = (run: StravaActivityContext, index?: number) => {
   const prefix = typeof index === "number" ? `${index + 1}. ` : "- ";
@@ -58,9 +59,11 @@ const buildAnalysisPrompt = (input: AnalysisInput) => {
   ].join("\n");
 };
 
-export const runRunAnalysis = async (input: AnalysisInput) => {
-  const msg = await callDeepSeek([
-    { role: "user", content: buildAnalysisPrompt(input) },
-  ]);
+export const runRunAnalysis = async (input: AnalysisInput, log: Logger = noopLogger) => {
+  const msg = await callDeepSeek(
+    [{ role: "user", content: buildAnalysisPrompt(input) }],
+    undefined,
+    log
+  );
   return msg.content ?? "";
 };

@@ -6,6 +6,7 @@ import { callDeepSeek } from "./deepseek";
 import { loadConversation, MAX_CONVERSATION_TURNS, saveConversation } from "./conversation";
 import { TOOL_DEFINITIONS, executeTool } from "./tools";
 import type { AgentContext, ConversationEntry, Message } from "./types";
+import { type Logger, noopLogger } from "../logger";
 
 const MAX_TOOL_CALLS = 4;
 
@@ -24,10 +25,11 @@ const buildSystemInstruction = (hasLinkedStrava: boolean) =>
 
 export const runNaturalLanguageAi = async (
   prompt: string,
-  discordUserId: string
+  discordUserId: string,
+  log: Logger = noopLogger
 ) => {
   const [linkedStravaUser, pastConversation] = await Promise.all([
-    getLinkedStravaUserByDiscordId(discordUserId),
+    getLinkedStravaUserByDiscordId(discordUserId, log),
     loadConversation(discordUserId),
   ]);
   const hasStrava = Boolean(linkedStravaUser);
@@ -35,6 +37,7 @@ export const runNaturalLanguageAi = async (
   const context: AgentContext = {
     discordUserId,
     linkedStravaUser,
+    log,
   };
   if (hasStrava) {
     context.cachedActivities = await getStoredStravaActivitiesByDiscordId(discordUserId);
@@ -52,12 +55,17 @@ export const runNaturalLanguageAi = async (
   let finalText = "";
 
   for (let iteration = 0; iteration < MAX_TOOL_CALLS; iteration += 1) {
-    const msg = await callDeepSeek(messages, TOOL_DEFINITIONS);
+    const msg = await callDeepSeek(messages, TOOL_DEFINITIONS, log);
 
     const toolCalls = msg.tool_calls ?? [];
 
     if (toolCalls.length === 0) {
       const response = msg.content || finalText || "Could not generate a response right now.";
+
+      log.info("AI chat completed", {
+        iterations: iteration,
+        responseLength: response.length,
+      });
 
       const updated: ConversationEntry[] = [
         ...pastConversation,
@@ -69,6 +77,9 @@ export const runNaturalLanguageAi = async (
 
       return response;
     }
+
+    const toolNames = toolCalls.map((c) => c.function.name);
+    log.info("AI tool call iteration", { iteration, toolCount: toolCalls.length, tools: toolNames });
 
     messages.push(msg);
 
@@ -85,5 +96,6 @@ export const runNaturalLanguageAi = async (
     finalText = msg.content ?? finalText;
   }
 
+  log.warn("AI chat hit max tool call iterations", { maxIterations: MAX_TOOL_CALLS });
   return finalText || "I could not finish the request in time.";
 };

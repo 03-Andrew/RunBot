@@ -60,6 +60,25 @@ resource "aws_iam_role_policy_attachment" "worker_basic" {
 }
 
 ################################
+# CloudWatch Logs
+################################
+
+resource "aws_cloudwatch_log_group" "api" {
+  name              = "/aws/lambda/api"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "strava_worker" {
+  name              = "/aws/lambda/strava-worker"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "weekly_recap" {
+  name              = "/aws/lambda/weekly-recap"
+  retention_in_days = 30
+}
+
+################################
 # SQS
 ################################
 

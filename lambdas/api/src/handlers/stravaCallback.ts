@@ -4,6 +4,7 @@ import { db } from "../storage";
 import { htmlResponse, textResponse } from "../http";
 import { postDiscordMessage, resolveStateNonce, sendDiscordDM } from "../discord";
 import { stravaConnectedPage } from "./stravaConnectedPage";
+import { type Logger, noopLogger } from "../logger";
 
 declare const process: {
   env: {
@@ -17,9 +18,12 @@ declare const process: {
 
 const sqs = new SQSClient({});
 
-export const handleStravaCallback = async (event: {
-  queryStringParameters?: Record<string, string | undefined> | null;
-}) => {
+export const handleStravaCallback = async (
+  event: {
+    queryStringParameters?: Record<string, string | undefined> | null;
+  },
+  log: Logger = noopLogger
+) => {
   const code = event.queryStringParameters?.code;
   const stateNonce = event.queryStringParameters?.state;
 
@@ -52,10 +56,9 @@ export const handleStravaCallback = async (event: {
   const data = await response.json();
 
   if (!response.ok || !data.athlete?.id) {
-    console.error("Strava token exchange failed", {
+    log.error("Strava token exchange failed", {
       status: response.status,
       message: data.message,
-      errors: data.errors,
     });
 
     return textResponse(400, "Could not connect Strava. Please try /strava again.");
@@ -80,7 +83,8 @@ export const handleStravaCallback = async (event: {
     })
   );
 
-  // Send a success notification message to the main Discord channel
+  log.info("Strava account linked", { discordId, athleteId });
+
   if (process.env.DISCORD_CHANNEL_ID) {
     try {
       await postDiscordMessage(
@@ -88,21 +92,19 @@ export const handleStravaCallback = async (event: {
         `🏃‍♂️🤖 **Account Linked!** <@${discordId}> has successfully connected their Strava account.`
       );
     } catch (err: any) {
-      console.error("Failed to notify Discord channel:", err.message);
+      log.error("Failed to notify Discord channel", { error: err.message });
     }
   }
 
-  // Try to send a friendly DM directly to the user
   try {
     await sendDiscordDM(
       discordId,
       `👋 **Strava Connected!** Your Strava account is now connected to RunBot. You can now use slash commands like \`/stats\`, \`/club-activities\`, and \`/analyse run\` directly in Discord!`
     );
   } catch (err: any) {
-    console.error("Failed to send Discord DM:", err.message);
+    log.error("Failed to send Discord DM", { error: err.message });
   }
 
-  // Queue an asynchronous backfill of historical runs from Strava to DynamoDB
   if (process.env.SQS_QUEUE_URL) {
     try {
       await sqs.send(
@@ -115,9 +117,9 @@ export const handleStravaCallback = async (event: {
           }),
         })
       );
-      console.log(`Queued Strava backfill job for user: ${discordId}`);
+      log.info("Queued Strava backfill job", { discordUserId: discordId });
     } catch (err: any) {
-      console.error("Failed to queue Strava backfill job:", err.message);
+      log.error("Failed to queue Strava backfill job", { error: err.message });
     }
   }
 

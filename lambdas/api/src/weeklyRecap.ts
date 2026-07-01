@@ -12,6 +12,7 @@ import {
 } from "./stravaFormatting";
 import { callDeepSeek } from "./ai/deepseek";
 import { postDiscordMessage } from "./discord";
+import { createLogger, type Logger } from "./logger";
 
 declare const process: {
   env: {
@@ -39,13 +40,13 @@ const getPastWeekStart = (): number => {
 
 const buildAthleteEntry = async (
   discordUserId: string,
-  weekStart: number
+  weekStart: number,
+  log: Logger
 ): Promise<string> => {
   const mention = `<@${discordUserId}>`;
   const weekStartMs = weekStart * 1000;
   const weekEndMs = (weekStart + 7 * 24 * 60 * 60) * 1000;
 
-  // Fetch activities from DynamoDB, filter to past week
   const activities = await getStoredStravaActivitiesByDiscordId(discordUserId);
   const weekActivities = activities.filter((a) => {
     const ts = getActivityTimestamp(a);
@@ -66,15 +67,17 @@ const buildAthleteEntry = async (
   ];
 
   try {
-    const ai = await callDeepSeek([
-      { role: "user", content: recapPrompt(mention, stats) },
-    ]);
+    const ai = await callDeepSeek(
+      [{ role: "user", content: recapPrompt(mention, stats) }],
+      undefined,
+      log
+    );
     const insight = ai.content?.trim();
     if (insight) {
       lines.push(`:bulb: ${insight}`);
     }
   } catch (err: any) {
-    console.error(`DeepSeek recap failed for ${discordUserId}:`, err.message);
+    log.error("DeepSeek recap failed", { discordUserId, error: err.message });
   }
 
   return lines.join("\n");
@@ -96,9 +99,11 @@ const recapPrompt = (
   ].join("\n");
 
 export const handler = async (): Promise<void> => {
+  const log = createLogger(`weekly-recap-${new Date().toISOString().slice(0, 10)}`);
+
   const channelId = process.env.DISCORD_CHANNEL_ID;
   if (!channelId) {
-    console.error("DISCORD_CHANNEL_ID not set");
+    log.error("DISCORD_CHANNEL_ID not set");
     return;
   }
 
@@ -120,16 +125,19 @@ export const handler = async (): Promise<void> => {
   );
 
   if (athleteIds.length === 0) {
+    log.info("No linked athletes found for weekly recap");
     await postDiscordMessage(channelId, `${header}No linked athletes yet. Use \`/strava\` to connect.`);
     return;
   }
 
+  log.info("Generating weekly recap", { athleteCount: athleteIds.length });
+
   const entries: string[] = [];
   for (const id of athleteIds) {
     try {
-      entries.push(await buildAthleteEntry(id, weekStart));
+      entries.push(await buildAthleteEntry(id, weekStart, log));
     } catch (err: any) {
-      console.error(`Recap failed for ${id}:`, err.message);
+      log.error("Recap failed for athlete", { discordUserId: id, error: err.message });
       entries.push(`**<@${id}>**\n:warning: Could not load data.`);
     }
   }
@@ -146,4 +154,6 @@ export const handler = async (): Promise<void> => {
   for (const msg of messages) {
     await postDiscordMessage(channelId, msg);
   }
+
+  log.info("Weekly recap posted", { athleteCount: athleteIds.length, messageCount: messages.length });
 };

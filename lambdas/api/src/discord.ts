@@ -1,6 +1,7 @@
 import { GetCommand, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { db } from "./storage";
 import { getHeader, getRawBody } from "./http";
+import { type Logger, noopLogger } from "./logger";
 
 declare const Buffer: any;
 declare const require: any;
@@ -70,7 +71,7 @@ export const isValidDiscordRequest = (
 
 export const getRawDiscordBody = getRawBody;
 
-const STATE_TTL_SECONDS = 600; // 10 minutes
+const STATE_TTL_SECONDS = 600;
 
 export const buildStravaAuthorizeUrl = async (discordUserId: string, clientId: string) => {
   const { randomBytes } = require("node:crypto");
@@ -116,7 +117,6 @@ export const resolveStateNonce = async (nonce: string): Promise<string | null> =
   const expiresAt = result.Item.expiresAt as number;
   if (Date.now() / 1000 > expiresAt) return null;
 
-  // Consume the nonce so it can't be replayed
   await db.send(
     new DeleteCommand({
       TableName: "ActivityBot",
@@ -147,7 +147,11 @@ export const postDiscordInteractionFollowUp = async (
   );
 };
 
-export const postDiscordMessage = async (channelId: string, content: string) => {
+export const postDiscordMessage = async (
+  channelId: string,
+  content: string,
+  log: Logger = noopLogger
+) => {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     throw new Error("Discord bot token is not configured.");
@@ -164,12 +168,16 @@ export const postDiscordMessage = async (channelId: string, content: string) => 
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error(`Failed to post Discord message: ${response.status} ${errorBody}`);
+    log.error("Failed to post Discord message", { status: response.status });
   }
   return response;
 };
 
-export const sendDiscordDM = async (userId: string, content: string) => {
+export const sendDiscordDM = async (
+  userId: string,
+  content: string,
+  log: Logger = noopLogger
+) => {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     throw new Error("Discord bot token is not configured.");
@@ -186,14 +194,13 @@ export const sendDiscordDM = async (userId: string, content: string) => {
     });
 
     if (!channelResponse.ok) {
-      const errorBody = await channelResponse.text();
-      console.error(`Failed to create DM channel: ${channelResponse.status} ${errorBody}`);
+      log.error("Failed to create DM channel", { status: channelResponse.status });
       return channelResponse;
     }
 
     const channelData = (await channelResponse.json()) as { id: string };
-    return await postDiscordMessage(channelData.id, content);
+    return await postDiscordMessage(channelData.id, content, log);
   } catch (error: any) {
-    console.error(`Error sending Discord DM: ${error.message}`);
+    log.error("Error sending Discord DM", { error: error.message });
   }
 };

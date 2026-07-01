@@ -158,7 +158,7 @@ const getPersonalRecords = async (context: AgentContext) => {
     const prRecord = await getStoredPersonalRecordsByDiscordId(context.discordUserId);
     if (prRecord?.personalRecords) {
       const prs = prRecord.personalRecords;
-      console.log(`Loaded pre-computed PRs from DynamoDB for user ${context.discordUserId}`);
+      context.log.info("Loaded pre-computed PRs from DynamoDB", { discordUserId: context.discordUserId });
       return {
         personalRecords: {
           longestRun: prs.longestRun ? summarizeRun(prs.longestRun) : undefined,
@@ -170,10 +170,10 @@ const getPersonalRecords = async (context: AgentContext) => {
       };
     }
   } catch (error: any) {
-    console.error(`Failed to read pre-computed PRs for user ${context.discordUserId}:`, error.message);
+    context.log.error("Failed to read pre-computed PRs", { discordUserId: context.discordUserId, error: error.message });
   }
 
-  console.log(`Materialized PR record not found. Falling back to on-the-fly calculations for user ${context.discordUserId}`);
+  context.log.info("PR record not found — falling back to on-the-fly calculation", { discordUserId: context.discordUserId });
   const activities = await getOrFetchActivities(context);
   const runs = dedupeAndSortRuns(activities);
 

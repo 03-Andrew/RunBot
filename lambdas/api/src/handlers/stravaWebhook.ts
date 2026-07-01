@@ -1,6 +1,7 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { getRawBody, jsonResponse, textResponse } from "../http";
 import type { StravaWebhookJob } from "../types";
+import { type Logger, noopLogger } from "../logger";
 
 declare const process: {
   env: {
@@ -11,16 +12,19 @@ declare const process: {
 
 const sqs = new SQSClient({});
 
-export const handleStravaWebhook = async (event: {
-  body?: string | null;
-  isBase64Encoded?: boolean;
-  queryStringParameters?: Record<string, string | undefined> | null;
-  requestContext?: {
-    http?: {
-      method?: string;
+export const handleStravaWebhook = async (
+  event: {
+    body?: string | null;
+    isBase64Encoded?: boolean;
+    queryStringParameters?: Record<string, string | undefined> | null;
+    requestContext?: {
+      http?: {
+        method?: string;
+      };
     };
-  };
-}) => {
+  },
+  log: Logger = noopLogger
+) => {
   if (event.requestContext?.http?.method === "GET") {
     const challenge = event.queryStringParameters?.["hub.challenge"];
     const verifyToken = event.queryStringParameters?.["hub.verify_token"];
@@ -39,42 +43,26 @@ export const handleStravaWebhook = async (event: {
   const objectType = body.object_type;
   const aspectType = body.aspect_type;
 
-  console.log("incoming webhook");
-  console.log(JSON.stringify(body));
+  log.info("Received Strava webhook", { ownerId: owner, activityId, objectType, aspectType });
 
   if (!owner) {
-    console.log("Ignoring Strava webhook without owner_id");
-
-    return jsonResponse(200, {
-      ignored: true,
-      reason: "missing_owner_id",
-    });
+    log.info("Ignoring Strava webhook without owner_id");
+    return jsonResponse(200, { ignored: true, reason: "missing_owner_id" });
   }
 
   if (objectType !== "activity" || !["create", "update"].includes(aspectType)) {
-    console.log("Ignoring non-notifiable Strava webhook", {
-      objectType,
-      aspectType,
-    });
-
-    return jsonResponse(200, {
-      ignored: true,
-      reason: "not_notifiable",
-    });
+    log.info("Ignoring non-notifiable Strava webhook", { objectType, aspectType });
+    return jsonResponse(200, { ignored: true, reason: "not_notifiable" });
   }
 
   if (!activityId) {
-    console.log("Ignoring Strava webhook without object_id");
-
-    return jsonResponse(200, {
-      ignored: true,
-      reason: "missing_object_id",
-    });
+    log.info("Ignoring Strava webhook without object_id");
+    return jsonResponse(200, { ignored: true, reason: "missing_object_id" });
   }
 
   const queueUrl = process.env.SQS_QUEUE_URL;
   if (!queueUrl) {
-    console.error("SQS queue is not configured");
+    log.error("SQS queue is not configured");
     return textResponse(500, "Queue not configured");
   }
 
@@ -94,21 +82,18 @@ export const handleStravaWebhook = async (event: {
       })
     );
 
-    console.log("Queued Strava webhook job", {
+    log.info("Queued Strava webhook job", {
       ownerId: owner,
       activityId,
       messageId: response.MessageId,
     });
 
-    return jsonResponse(200, {
-      queued: true,
-      received: true,
-    });
+    return jsonResponse(200, { queued: true, received: true });
   } catch (error) {
-    console.error("Failed to queue Strava webhook job", {
+    log.error("Failed to queue Strava webhook job", {
       ownerId: owner,
       activityId,
-      error,
+      error: String(error),
     });
 
     return textResponse(500, "Failed to queue webhook");

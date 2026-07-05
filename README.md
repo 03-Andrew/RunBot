@@ -1,5 +1,7 @@
 # RunBot
 
+> **Status (July 2026): On standby.** Strava moved their API to [subscriber-only access](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428). The API application has been deactivated, so all Strava-dependent features (webhooks, stats, club feed, AI coaching, PRs) are non-functional until a Strava subscription is active. The `/prs` command may still work if it doesn't depend on fresh Strava data. Architecture, code, and infra remain intact.
+
 Serverless AWS backend for a Strava + Discord bot. Connects Strava accounts to Discord, posts activity notifications, tracks personal records, and provides a DeepSeek-powered AI running coach.
 
 ## Features

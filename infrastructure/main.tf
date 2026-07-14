@@ -448,7 +448,8 @@ resource "aws_scheduler_schedule" "weekly_recap" {
     mode                      = "FLEXIBLE"
     maximum_window_in_minutes = 5
   }
-  schedule_expression = "cron(0 16 ? * 7 *)"
+  schedule_expression          = "cron(1 0 ? * MON *)"
+  schedule_expression_timezone = "Asia/Manila"
   target {
     arn      = aws_lambda_function.weekly_recap.arn
     role_arn = aws_iam_role.weekly_recap_scheduler_role.arn

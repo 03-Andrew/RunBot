@@ -564,16 +564,25 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob, log: Lo
 
     if (job.commandName === "analyse-run") {
       const lookbackSince = Math.floor(Date.now() / 1000) - RECENT_LOOKBACK_DAYS * 24 * 60 * 60;
-      const [recentActivities, storedActivities] = await Promise.all([
-        fetchStravaActivitiesSince(linkedUser, lookbackSince, log),
-        getStoredStravaActivitiesByDiscordId(job.discordUserId),
-      ]);
+
+      let recentActivities: StravaActivity[] = [];
+      try {
+        recentActivities = await fetchStravaActivitiesSince(linkedUser, lookbackSince, log);
+      } catch (apiError) {
+        log.warn("Strava API fetch failed, falling back to stored activities", {
+          error: String(apiError),
+        });
+      }
+
+      const storedActivities = await getStoredStravaActivitiesByDiscordId(job.discordUserId);
 
       const allRuns = dedupeAndSortRuns([...recentActivities, ...storedActivities]);
       const recentRuns = allRuns.slice(0, 5);
       const historicalRuns = allRuns.slice(5, 15);
       const latestRun = recentRuns[0] ?? historicalRuns[0];
-      const weeklySummary = calculateWeeklyStats(recentActivities);
+      const weeklySummary = calculateWeeklyStats(
+        recentActivities.length > 0 ? recentActivities : storedActivities
+      );
 
       if (!latestRun) {
         const response = await postDiscordInteractionFollowUp(
@@ -642,7 +651,9 @@ const handleDiscordSlashCommandJob = async (job: DiscordSlashCommandJob, log: Lo
       job.interactionToken,
       job.commandName === "stats"
         ? "Could not load your weekly Strava stats right now."
-        : "Could not load club activities right now."
+        : job.commandName === "analyse-run"
+        ? "Could not generate your run analysis right now."
+        : "Could not process your request right now."
     );
 
     if (!response.ok) {
